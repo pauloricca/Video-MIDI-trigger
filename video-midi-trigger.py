@@ -46,12 +46,45 @@ class MIDIController:
 class Trigger:
     """Represents a visual trigger area and its MIDI mapping."""
     
+    # Color constants for visual feedback
+    ACTIVE_COLOR = (0, 255, 0)    # Green
+    INACTIVE_COLOR = (0, 0, 255)  # Red
+    
     def __init__(self, config):
         self.name = config.get('name', 'Unnamed Trigger')
+        
+        # Validate required configuration keys
+        required_keys = ['position', 'type', 'threshold', 'midi']
+        for key in required_keys:
+            if key not in config:
+                raise ValueError(f"Missing required configuration key '{key}' in trigger '{self.name}'")
+        
         self.position = config['position']
+        
+        # Validate position percentages
+        for key in ['x', 'y', 'width', 'height']:
+            if key not in self.position:
+                raise ValueError(f"Missing '{key}' in position for trigger '{self.name}'")
+            value = self.position[key]
+            if not (0 <= value <= 100):
+                raise ValueError(f"Position '{key}' must be between 0 and 100, got {value} for trigger '{self.name}'")
+        
         self.trigger_type = config['type']
         self.threshold = config['threshold']
         self.midi_config = config['midi']
+        
+        # Validate MIDI parameters
+        note = self.midi_config.get('note')
+        velocity = self.midi_config.get('velocity', 100)
+        channel = self.midi_config.get('channel', 0)
+        
+        if not (0 <= note <= 127):
+            raise ValueError(f"MIDI note must be between 0 and 127, got {note} for trigger '{self.name}'")
+        if not (0 <= velocity <= 127):
+            raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity} for trigger '{self.name}'")
+        if not (0 <= channel <= 15):
+            raise ValueError(f"MIDI channel must be between 0 and 15, got {channel} for trigger '{self.name}'")
+        
         self.active = False
         self.roi_coords = None  # Will be set when frame size is known
     
@@ -67,6 +100,19 @@ class Trigger:
         y = int(frame_height * y_percent / 100)
         w = int(frame_width * w_percent / 100)
         h = int(frame_height * h_percent / 100)
+        
+        # Validate ROI bounds
+        if w <= 0 or h <= 0:
+            raise ValueError(f"Invalid ROI size for trigger '{self.name}': width={w}, height={h}")
+        
+        # Ensure ROI stays within frame boundaries
+        if x + w > frame_width:
+            w = frame_width - x
+        if y + h > frame_height:
+            h = frame_height - y
+        
+        if x < 0 or y < 0 or x >= frame_width or y >= frame_height:
+            raise ValueError(f"Invalid ROI position for trigger '{self.name}': x={x}, y={y}")
         
         self.roi_coords = (x, y, w, h)
     
@@ -94,7 +140,7 @@ class Trigger:
         x, y, w, h = self.roi_coords
         
         # Choose color based on active state
-        color = (0, 255, 0) if self.active else (0, 0, 255)
+        color = self.ACTIVE_COLOR if self.active else self.INACTIVE_COLOR
         
         # Draw rectangle
         cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
@@ -175,6 +221,15 @@ class VideoMIDITrigger:
             # Draw trigger area on frame
             trigger.draw_on_frame(frame)
     
+    def reset_triggers(self):
+        """Reset all triggers and send MIDI Note Off messages."""
+        for trigger in self.triggers:
+            if trigger.active:
+                trigger.active = False
+                note = trigger.midi_config['note']
+                channel = trigger.midi_config['channel']
+                self.midi.send_note_off(note, channel)
+    
     def run(self):
         """Main loop to play video and process triggers."""
         print("\nStarting video playback...")
@@ -188,8 +243,9 @@ class VideoMIDITrigger:
                 ret, frame = self.cap.read()
                 
                 if not ret:
-                    # Video ended, restart from beginning
+                    # Video ended, reset triggers and restart from beginning
                     print("Video ended, restarting...")
+                    self.reset_triggers()
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
                 
@@ -205,6 +261,7 @@ class VideoMIDITrigger:
                     break
                 elif key == ord('r'):
                     print("Restarting video...")
+                    self.reset_triggers()
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         
         finally:
@@ -239,8 +296,19 @@ def main():
     try:
         app = VideoMIDITrigger(config_name)
         app.run()
+    except FileNotFoundError as e:
+        print(f"File not found: {e}")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"Configuration error: {e}")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+        sys.exit(0)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
