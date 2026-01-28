@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import rtmidi
 import os
+import time
 from pathlib import Path
 
 
@@ -144,7 +145,7 @@ class Trigger:
         
         self.roi_coords = (x, y, w, h)
     
-    def check_trigger(self, frame):
+    def check_trigger(self, frame, gray_frame=None):
         """Check if the trigger condition is met."""
         if self.roi_coords is None:
             return False
@@ -154,13 +155,19 @@ class Trigger:
         
         if self.trigger_type == 'brightness':
             # Calculate average brightness in the ROI
-            gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            if gray_frame is not None:
+                gray_roi = gray_frame[y:y+h, x:x+w]
+            else:
+                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             avg_brightness = np.mean(gray_roi)
             return avg_brightness >= self.threshold
         
         if self.trigger_type == 'darkness':
             # Calculate average brightness in the ROI
-            gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            if gray_frame is not None:
+                gray_roi = gray_frame[y:y+h, x:x+w]
+            else:
+                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             avg_brightness = np.mean(gray_roi)
             return avg_brightness <= self.threshold
         
@@ -200,8 +207,10 @@ class VideoMIDITrigger:
         with open(self.config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
-        self.video_path = self.config['video_path']
-        if not os.path.exists(self.video_path):
+        source = self.config['source']
+        use_camera = isinstance(source, str) and source.lower() == "camera"
+        self.video_path = source
+        if not use_camera and not os.path.exists(self.video_path):
             raise FileNotFoundError(f"Video file not found: {self.video_path}")
         
         # Initialize triggers
@@ -212,28 +221,49 @@ class VideoMIDITrigger:
         self.midi = MIDIController(device_name=device_name)
         
         # Initialize video capture
-        self.cap = cv2.VideoCapture(self.video_path)
+        self.cap = cv2.VideoCapture(0 if use_camera else self.video_path)
         if not self.cap.isOpened():
+            if use_camera:
+                raise RuntimeError("Could not open camera.")
             raise RuntimeError(f"Could not open video: {self.video_path}")
+        
+        # Apply camera settings to improve performance (optional overrides in config)
+        self.target_fps = None
+        if use_camera:
+            camera_cfg = self.config.get('camera', {})
+            width = camera_cfg.get('width', 640)
+            height = camera_cfg.get('height', 480)
+            fps = camera_cfg.get('fps', 30)
+            
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self.cap.set(cv2.CAP_PROP_FPS, fps)
+            self.target_fps = fps
         
         # Get video properties
         self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        if use_camera and (not self.fps or self.fps <= 0) and self.target_fps:
+            self.fps = self.target_fps
         
         # Setup trigger ROIs
         for trigger in self.triggers:
             trigger.setup_roi(self.frame_height, self.frame_width)
         
-        print(f"Video: {self.video_path}")
+        if use_camera:
+            print("Video: camera")
+        else:
+            print(f"Video: {self.video_path}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
         print(f"FPS: {self.fps}")
         print(f"Triggers: {len(self.triggers)}")
     
     def process_frame(self, frame):
         """Process a single frame and check all triggers."""
+        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         for trigger in self.triggers:
-            triggered = trigger.check_trigger(frame)
+            triggered = trigger.check_trigger(frame, gray_frame=gray_frame)
             
             # Handle state changes
             if triggered and not trigger.active:
@@ -271,10 +301,11 @@ class VideoMIDITrigger:
         print("Press 'q' to quit, 'r' to restart video\n")
         
         # Calculate delay between frames (in milliseconds)
-        delay = int(1000 / self.fps) if self.fps > 0 else 30
+        delay = int(1000 / self.fps) if self.fps > 0 else 1
         
         try:
             while True:
+                loop_start = time.perf_counter()
                 ret, frame = self.cap.read()
                 
                 if not ret:
@@ -291,7 +322,9 @@ class VideoMIDITrigger:
                 cv2.imshow('Video-MIDI Trigger', frame)
                 
                 # Handle keyboard input
-                key = cv2.waitKey(delay) & 0xFF
+                elapsed_ms = (time.perf_counter() - loop_start) * 1000
+                sleep_ms = max(1, int(delay - elapsed_ms))
+                key = cv2.waitKey(sleep_ms) & 0xFF
                 if key == ord('q'):
                     break
                 elif key == ord('r'):

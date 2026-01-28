@@ -41,7 +41,7 @@ This will load the `road.yaml` configuration file.
 Create a YAML configuration file (e.g., `road.yaml`) with the following structure:
 
 ```yaml
-video_path: "path/to/your/video.mp4"
+source: "path/to/your/video.mp4"
 
 triggers:
   - name: "Top Left Trigger"
@@ -60,7 +60,11 @@ triggers:
 
 ### Configuration Parameters
 
-- **video_path**: Path to the video file (relative or absolute)
+- **source**: Path to the video file (relative or absolute) or `"camera"` to use the webcam
+- **camera** (optional): Settings applied when `source: "camera"`
+  - **width**: Camera capture width (default 640)
+  - **height**: Camera capture height (default 480)
+  - **fps**: Target camera FPS (default 30)
 - **triggers**: List of trigger definitions
   - **name**: Descriptive name for the trigger
   - **position**: Location and size of the trigger area
@@ -108,4 +112,4 @@ You can use software like DAWs, synthesizers, or MIDI monitoring tools to receiv
 
 ## Example
 
-An example configuration file `road.yaml` is included in the repository. You'll need to update the `video_path` to point to an actual video file on your system.
+An example configuration file `road.yaml` is included in the repository. You'll need to update the `source` to point to an actual video file on your system (or set it to `"camera"`).
