@@ -16,15 +16,43 @@ from pathlib import Path
 class MIDIController:
     """Handles MIDI output."""
     
-    def __init__(self):
+    def __init__(self, device_name=None):
         self.midi_out = rtmidi.MidiOut()
         available_ports = self.midi_out.get_ports()
         
+        if available_ports:
+            print("MIDI: Available output devices:")
+            for i, name in enumerate(available_ports):
+                print(f"  [{i}] {name}")
+        else:
+            print("MIDI: No output devices found.")
+        
         # Try to open a port, create virtual port if none available
         if available_ports:
-            self.midi_out.open_port(0)
-            print(f"MIDI: Connected to {available_ports[0]}")
+            port_index = 0
+            if device_name:
+                match_index = None
+                for i, name in enumerate(available_ports):
+                    if name == device_name:
+                        match_index = i
+                        break
+                if match_index is None:
+                    for i, name in enumerate(available_ports):
+                        if name.lower() == device_name.lower():
+                            match_index = i
+                            break
+                if match_index is None:
+                    raise ValueError(
+                        f"MIDI device '{device_name}' not found. "
+                        f"Available devices: {available_ports}"
+                    )
+                port_index = match_index
+            
+            self.midi_out.open_port(port_index)
+            print(f"MIDI: Connected to {available_ports[port_index]}")
         else:
+            if device_name:
+                raise ValueError(f"MIDI device '{device_name}' not found (no output devices available).")
             self.midi_out.open_virtual_port("Video-MIDI-Trigger")
             print("MIDI: Created virtual MIDI port 'Video-MIDI-Trigger'")
     
@@ -130,6 +158,12 @@ class Trigger:
             avg_brightness = np.mean(gray_roi)
             return avg_brightness >= self.threshold
         
+        if self.trigger_type == 'darkness':
+            # Calculate average brightness in the ROI
+            gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            avg_brightness = np.mean(gray_roi)
+            return avg_brightness <= self.threshold
+        
         return False
     
     def draw_on_frame(self, frame):
@@ -174,7 +208,8 @@ class VideoMIDITrigger:
         self.triggers = [Trigger(t) for t in self.config['triggers']]
         
         # Initialize MIDI controller
-        self.midi = MIDIController()
+        device_name = self.config.get('device')
+        self.midi = MIDIController(device_name=device_name)
         
         # Initialize video capture
         self.cap = cv2.VideoCapture(self.video_path)

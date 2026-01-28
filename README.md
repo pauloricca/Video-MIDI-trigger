@@ -18,6 +18,10 @@ A Python application that triggers MIDI messages based on visual events in a vid
 2. Install the required dependencies:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+pyenv local 3.9.18
+pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 ```
 
@@ -26,6 +30,7 @@ pip install -r requirements.txt
 Run the application with a configuration file name as an argument:
 
 ```bash
+source .venv/bin/activate
 python video-midi-trigger.py road
 ```
 
