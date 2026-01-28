@@ -1,0 +1,41 @@
+video_path: "example_video.mp4"
+
+triggers:
+  - name: "Top Left Trigger"
+    position:
+      x: 10  # percentage (0-100)
+      y: 10  # percentage (0-100)
+      width: 5  # percentage of frame width
+      height: 5  # percentage of frame height
+    type: "brightness"
+    threshold: 200  # brightness threshold (0-255)
+    midi:
+      note: 60  # Middle C
+      velocity: 100
+      channel: 0
+  
+  - name: "Top Right Trigger"
+    position:
+      x: 85
+      y: 10
+      width: 5
+      height: 5
+    type: "brightness"
+    threshold: 180
+    midi:
+      note: 62  # D
+      velocity: 100
+      channel: 0
+  
+  - name: "Bottom Center Trigger"
+    position:
+      x: 47.5
+      y: 80
+      width: 5
+      height: 5
+    type: "brightness"
+    threshold: 150
+    midi:
+      note: 64  # E
+      velocity: 100
+      channel: 0
