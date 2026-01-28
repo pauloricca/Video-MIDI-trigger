@@ -203,33 +203,59 @@ class VideoMIDITrigger:
         if not self.config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
         
-        # Load configuration
-        with open(self.config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
+        # Load configuration and initialize
+        self.config_mtime = None
+        self.config = None
+        self.triggers = []
+        self.target_fps = None
+        self.use_camera = False
+        self.video_path = None
         
-        source = self.config['source']
-        use_camera = isinstance(source, str) and source.lower() == "camera"
-        self.video_path = source
-        if not use_camera and not os.path.exists(self.video_path):
-            raise FileNotFoundError(f"Video file not found: {self.video_path}")
+        self._load_config()
         
-        # Initialize triggers
-        self.triggers = [Trigger(t) for t in self.config['triggers']]
-        
-        # Initialize MIDI controller
+        # Initialize MIDI controller (device changes require restart)
         device_name = self.config.get('device')
         self.midi = MIDIController(device_name=device_name)
         
         # Initialize video capture
-        self.cap = cv2.VideoCapture(0 if use_camera else self.video_path)
+        self._init_capture()
+        
+        # Setup trigger ROIs
+        for trigger in self.triggers:
+            trigger.setup_roi(self.frame_height, self.frame_width)
+        
+        if self.use_camera:
+            print("Video: camera")
+        else:
+            print(f"Video: {self.video_path}")
+        print(f"Resolution: {self.frame_width}x{self.frame_height}")
+        print(f"FPS: {self.fps}")
+        print(f"Triggers: {len(self.triggers)}")
+
+    def _load_config(self):
+        with open(self.config_path, 'r') as f:
+            self.config = yaml.safe_load(f)
+        self.config_mtime = self.config_path.stat().st_mtime
+        
+        source = self.config['source']
+        self.use_camera = isinstance(source, str) and source.lower() == "camera"
+        self.video_path = source
+        if not self.use_camera and not os.path.exists(self.video_path):
+            raise FileNotFoundError(f"Video file not found: {self.video_path}")
+        
+        # Rebuild triggers
+        self.triggers = [Trigger(t) for t in self.config['triggers']]
+
+    def _init_capture(self):
+        self.cap = cv2.VideoCapture(0 if self.use_camera else self.video_path)
         if not self.cap.isOpened():
-            if use_camera:
+            if self.use_camera:
                 raise RuntimeError("Could not open camera.")
             raise RuntimeError(f"Could not open video: {self.video_path}")
         
         # Apply camera settings to improve performance (optional overrides in config)
         self.target_fps = None
-        if use_camera:
+        if self.use_camera:
             camera_cfg = self.config.get('camera', {})
             width = camera_cfg.get('width', 640)
             height = camera_cfg.get('height', 480)
@@ -244,20 +270,34 @@ class VideoMIDITrigger:
         self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
-        if use_camera and (not self.fps or self.fps <= 0) and self.target_fps:
+        if self.use_camera and (not self.fps or self.fps <= 0) and self.target_fps:
             self.fps = self.target_fps
+
+    def _reload_if_changed(self):
+        try:
+            new_mtime = self.config_path.stat().st_mtime
+        except FileNotFoundError:
+            return
         
-        # Setup trigger ROIs
+        if self.config_mtime is not None and new_mtime <= self.config_mtime:
+            return
+        
+        previous_source = self.config.get('source') if self.config else None
+        previous_device = self.config.get('device') if self.config else None
+        
+        self._load_config()
+        
+        # Warn if device/source changed (requires restart to take effect)
+        if self.config.get('device') != previous_device:
+            print("Config reloaded: device change detected (restart required to apply).")
+        if self.config.get('source') != previous_source:
+            print("Config reloaded: source change detected (restart required to apply).")
+        
+        # Re-setup trigger ROIs with current frame size
         for trigger in self.triggers:
             trigger.setup_roi(self.frame_height, self.frame_width)
         
-        if use_camera:
-            print("Video: camera")
-        else:
-            print(f"Video: {self.video_path}")
-        print(f"Resolution: {self.frame_width}x{self.frame_height}")
-        print(f"FPS: {self.fps}")
-        print(f"Triggers: {len(self.triggers)}")
+        print("Config reloaded.")
     
     def process_frame(self, frame):
         """Process a single frame and check all triggers."""
@@ -316,6 +356,7 @@ class VideoMIDITrigger:
                     continue
                 
                 # Process triggers
+                self._reload_if_changed()
                 self.process_frame(frame)
                 
                 # Display frame

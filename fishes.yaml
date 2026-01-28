@@ -1,5 +1,4 @@
-#source: "video2.mp4"
-source: camera
+source: "video2.mp4"
 device: "IAC Driver Bus 1"
 
 triggers:

@@ -1,0 +1,42 @@
+source: camera
+device: "IAC Driver Bus 1"
+
+triggers:
+  - name: "Top Left Trigger"
+    position:
+      x: 10  # percentage (0-100)
+      y: 10  # percentage (0-100)
+      width: 10  # percentage of frame width
+      height: 10  # percentage of frame height
+    type: "darkness"
+    threshold: 100
+    midi:
+      note: 60  # Middle C
+      velocity: 100
+      channel: 0
+  
+  - name: "Top Right Trigger"
+    position:
+      x: 85
+      y: 10
+      width: 10
+      height: 10
+    type: "darkness"
+    threshold: 100
+    midi:
+      note: 62  # D
+      velocity: 100
+      channel: 0
+  
+  - name: "Bottom Center Trigger"
+    position:
+      x: 47.5
+      y: 70
+      width: 10
+      height: 10
+    type: "darkness"
+    threshold: 100
+    midi:
+      note: 64  # E
+      velocity: 100
+      channel: 0
