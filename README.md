@@ -1,6 +1,6 @@
 # Video-MIDI-trigger
 
-A Python application that triggers MIDI messages based on visual events in a video. Monitor specific areas of a video for brightness changes and send corresponding MIDI notes.
+A Python application that triggers MIDI messages based on visual events in a video. Monitor specific areas of a video for brightness changes and send corresponding MIDI notes or CC values.
 
 ## Features
 
@@ -71,11 +71,13 @@ triggers:
   - **position**: Location and size of the trigger area
     - **x, y**: Position as percentage of frame dimensions (0-100)
     - **width, height**: Size as percentage of frame dimensions (0-100)
-  - **type**: Currently supports "brightness"
-  - **threshold**: Brightness value (0-255) that activates the trigger
+  - **type**: Supports "brightness", "darkness", and "range"
+  - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness)
+  - **min/max**: Brightness range (0-255) used to map CC values (range)
   - **midi**: MIDI message configuration
-    - **note**: MIDI note number (0-127)
-    - **velocity**: Note velocity (0-127)
+    - **note**: MIDI note number (0-127) for brightness/darkness
+    - **velocity**: Note velocity (0-127) for brightness/darkness
+    - **cc**: MIDI CC number (0-127) for range
     - **channel**: MIDI channel (0-15)
 
 ## Controls
@@ -89,8 +91,8 @@ triggers:
 2. Opens the video file specified in the configuration
 3. For each frame:
    - Analyzes the brightness in each trigger area
-   - Sends MIDI Note On when brightness exceeds the threshold
-   - Sends MIDI Note Off when brightness falls below the threshold
+   - Sends MIDI Note On/Off for brightness/darkness triggers
+   - Sends MIDI CC values for range triggers (mapped from min/max)
 4. Displays the video with visual overlays showing trigger areas:
    - Red rectangle: Inactive trigger
    - Green rectangle: Active trigger

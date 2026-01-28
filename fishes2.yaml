@@ -1,0 +1,94 @@
+source: "video2.mp4"
+device: "S-1 MIDI IN"
+
+triggers:
+  - name: "1"
+    position:
+      x: 10
+      y: 10
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 10
+    midi:
+      note: 60
+      velocity: 100
+      channel: 0
+  
+  - name: "2"
+    position:
+      x: 85
+      y: 10
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 10
+    midi:
+      note: 64
+      velocity: 100
+      channel: 0
+  
+  - name: "3"
+    position:
+      x: 47.5
+      y: 70
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 10
+    midi:
+      note: 65
+      velocity: 100
+      channel: 0
+  
+  - name: "4"
+    position:
+      x: 27.5
+      y: 50
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 10
+    midi:
+      note: 67
+      velocity: 100
+      channel: 0
+  
+  - name: "5"
+    position:
+      x: 67.5
+      y: 50
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 10
+    midi:
+      note: 70
+      velocity: 100
+      channel: 0
+
+  - name: "Noise"
+    position:
+      x: 10
+      y: 30
+      width: 10
+      height: 30
+    type: "range"
+    min: 0
+    max: 150
+    midi:
+      cc: 23
+      channel: 0
+
+  - name: "Filter"
+    position:
+      x: 10
+      y: 70
+      width: 10
+      height: 30
+    type: "range"
+    min: 0
+    max: 120
+    midi:
+      cc: 25
+      channel: 0

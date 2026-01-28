@@ -66,6 +66,11 @@ class MIDIController:
         """Send a MIDI Note Off message."""
         message = [0x80 | channel, note, 0]
         self.midi_out.send_message(message)
+
+    def send_cc(self, cc, value, channel=0):
+        """Send a MIDI Control Change message."""
+        message = [0xB0 | channel, cc, value]
+        self.midi_out.send_message(message)
     
     def close(self):
         """Close MIDI connection."""
@@ -83,7 +88,7 @@ class Trigger:
         self.name = config.get('name', 'Unnamed Trigger')
         
         # Validate required configuration keys
-        required_keys = ['position', 'type', 'threshold', 'midi']
+        required_keys = ['position', 'type', 'midi']
         for key in required_keys:
             if key not in config:
                 raise ValueError(f"Missing required configuration key '{key}' in trigger '{self.name}'")
@@ -99,23 +104,59 @@ class Trigger:
                 raise ValueError(f"Position '{key}' must be between 0 and 100, got {value} for trigger '{self.name}'")
         
         self.trigger_type = config['type']
-        self.threshold = config['threshold']
+        self.threshold = config.get('threshold')
+        self.range_min = config.get('min')
+        self.range_max = config.get('max')
         self.midi_config = config['midi']
         
-        # Validate MIDI parameters
-        note = self.midi_config.get('note')
-        velocity = self.midi_config.get('velocity', 100)
-        channel = self.midi_config.get('channel', 0)
+        # Validate trigger parameters
+        if self.trigger_type in ('brightness', 'darkness'):
+            if self.threshold is None:
+                raise ValueError(f"Missing 'threshold' for trigger '{self.name}'")
+            if not (0 <= self.threshold <= 255):
+                raise ValueError(f"Threshold must be between 0 and 255 for trigger '{self.name}'")
+        elif self.trigger_type == 'range':
+            if self.range_min is None or self.range_max is None:
+                raise ValueError(f"Missing 'min'/'max' for trigger '{self.name}'")
+            if not (0 <= self.range_min <= 255) or not (0 <= self.range_max <= 255):
+                raise ValueError(f"Range min/max must be between 0 and 255 for trigger '{self.name}'")
+        else:
+            raise ValueError(f"Unknown trigger type '{self.trigger_type}' in trigger '{self.name}'")
         
-        if not (0 <= note <= 127):
-            raise ValueError(f"MIDI note must be between 0 and 127, got {note} for trigger '{self.name}'")
-        if not (0 <= velocity <= 127):
-            raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity} for trigger '{self.name}'")
+        # Validate MIDI parameters
+        channel = self.midi_config.get('channel', 0)
         if not (0 <= channel <= 15):
             raise ValueError(f"MIDI channel must be between 0 and 15, got {channel} for trigger '{self.name}'")
         
+        if self.trigger_type in ('brightness', 'darkness'):
+            note = self.midi_config.get('note')
+            velocity = self.midi_config.get('velocity', 100)
+            if note is None:
+                raise ValueError(f"Missing MIDI note for trigger '{self.name}'")
+            if not (0 <= note <= 127):
+                raise ValueError(f"MIDI note must be between 0 and 127, got {note} for trigger '{self.name}'")
+            if not (0 <= velocity <= 127):
+                raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity} for trigger '{self.name}'")
+        elif self.trigger_type == 'range':
+            cc = self.midi_config.get('cc')
+            if cc is None:
+                raise ValueError(f"Missing MIDI CC for trigger '{self.name}'")
+            if not (0 <= cc <= 127):
+                raise ValueError(f"MIDI CC must be between 0 and 127, got {cc} for trigger '{self.name}'")
+        
         self.active = False
+        self.last_cc_value = None
+        self.range_level = 0.0
         self.roi_coords = None  # Will be set when frame size is known
+
+    def _avg_brightness(self, frame, gray_frame=None):
+        x, y, w, h = self.roi_coords
+        if gray_frame is not None:
+            gray_roi = gray_frame[y:y+h, x:x+w]
+        else:
+            roi = frame[y:y+h, x:x+w]
+            gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        return float(np.mean(gray_roi))
     
     def setup_roi(self, frame_height, frame_width):
         """Calculate the region of interest coordinates based on frame size."""
@@ -151,25 +192,28 @@ class Trigger:
             return False
         
         x, y, w, h = self.roi_coords
-        roi = frame[y:y+h, x:x+w]
         
         if self.trigger_type == 'brightness':
             # Calculate average brightness in the ROI
-            if gray_frame is not None:
-                gray_roi = gray_frame[y:y+h, x:x+w]
-            else:
-                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-            avg_brightness = np.mean(gray_roi)
+            avg_brightness = self._avg_brightness(frame, gray_frame)
             return avg_brightness >= self.threshold
         
         if self.trigger_type == 'darkness':
             # Calculate average brightness in the ROI
-            if gray_frame is not None:
-                gray_roi = gray_frame[y:y+h, x:x+w]
-            else:
-                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-            avg_brightness = np.mean(gray_roi)
+            avg_brightness = self._avg_brightness(frame, gray_frame)
             return avg_brightness <= self.threshold
+        
+        if self.trigger_type == 'range':
+            avg_brightness = self._avg_brightness(frame, gray_frame)
+            low = min(self.range_min, self.range_max)
+            high = max(self.range_min, self.range_max)
+            clipped = min(max(avg_brightness, low), high)
+            if self.range_min == self.range_max:
+                self.range_level = 0.0
+            else:
+                self.range_level = (clipped - self.range_min) / (self.range_max - self.range_min)
+            value = int(round(self.range_level * 127))
+            return value
         
         return False
     
@@ -182,6 +226,16 @@ class Trigger:
         
         # Choose color based on active state
         color = self.ACTIVE_COLOR if self.active else self.INACTIVE_COLOR
+
+        if self.trigger_type == 'range':
+            # Filled vertical bar (transparent blue)
+            fill_h = int(h * self.range_level)
+            if fill_h > 0:
+                overlay = frame.copy()
+                fill_y = y + (h - fill_h)
+                cv2.rectangle(overlay, (x, fill_y), (x + w, y + h), (255, 255, 255), -1)
+                cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
+            color = (255, 255, 255)
         
         # Draw rectangle
         cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
@@ -303,25 +357,34 @@ class VideoMIDITrigger:
         """Process a single frame and check all triggers."""
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         for trigger in self.triggers:
-            triggered = trigger.check_trigger(frame, gray_frame=gray_frame)
-            
-            # Handle state changes
-            if triggered and not trigger.active:
-                # Trigger activated
+            if trigger.trigger_type == 'range':
+                value = trigger.check_trigger(frame, gray_frame=gray_frame)
+                if value != trigger.last_cc_value:
+                    trigger.last_cc_value = value
+                    cc = trigger.midi_config['cc']
+                    channel = trigger.midi_config.get('channel', 0)
+                    self.midi.send_cc(cc, value, channel)
                 trigger.active = True
-                note = trigger.midi_config['note']
-                velocity = trigger.midi_config['velocity']
-                channel = trigger.midi_config['channel']
-                self.midi.send_note_on(note, velocity, channel)
-                print(f"✓ {trigger.name}: Note ON (Note: {note})")
-            
-            elif not triggered and trigger.active:
-                # Trigger deactivated
-                trigger.active = False
-                note = trigger.midi_config['note']
-                channel = trigger.midi_config['channel']
-                self.midi.send_note_off(note, channel)
-                print(f"✗ {trigger.name}: Note OFF (Note: {note})")
+            else:
+                triggered = trigger.check_trigger(frame, gray_frame=gray_frame)
+                
+                # Handle state changes
+                if triggered and not trigger.active:
+                    # Trigger activated
+                    trigger.active = True
+                    note = trigger.midi_config['note']
+                    velocity = trigger.midi_config['velocity']
+                    channel = trigger.midi_config['channel']
+                    self.midi.send_note_on(note, velocity, channel)
+                    print(f"✓ {trigger.name}: Note ON (Note: {note})")
+                
+                elif not triggered and trigger.active:
+                    # Trigger deactivated
+                    trigger.active = False
+                    note = trigger.midi_config['note']
+                    channel = trigger.midi_config['channel']
+                    self.midi.send_note_off(note, channel)
+                    print(f"✗ {trigger.name}: Note OFF (Note: {note})")
             
             # Draw trigger area on frame
             trigger.draw_on_frame(frame)
@@ -329,7 +392,7 @@ class VideoMIDITrigger:
     def reset_triggers(self):
         """Reset all triggers and send MIDI Note Off messages."""
         for trigger in self.triggers:
-            if trigger.active:
+            if trigger.active and 'note' in trigger.midi_config:
                 trigger.active = False
                 note = trigger.midi_config['note']
                 channel = trigger.midi_config['channel']
@@ -354,6 +417,9 @@ class VideoMIDITrigger:
                     self.reset_triggers()
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
+
+                if self.use_camera:
+                    frame = cv2.flip(frame, 1)
                 
                 # Process triggers
                 self._reload_if_changed()
@@ -382,7 +448,7 @@ class VideoMIDITrigger:
         
         # Send note off for any active triggers
         for trigger in self.triggers:
-            if trigger.active:
+            if trigger.active and 'note' in trigger.midi_config:
                 note = trigger.midi_config['note']
                 channel = trigger.midi_config['channel']
                 self.midi.send_note_off(note, channel)

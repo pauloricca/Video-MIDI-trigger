@@ -1,42 +1,57 @@
-source: camera
-device: "IAC Driver Bus 1"
+# source: camera
+source: video2.mp4
+# device: "IAC Driver Bus 1"
+device: "S-1 MIDI IN"
 
 triggers:
-  - name: "Top Left Trigger"
+  - name: "A"
     position:
-      x: 10  # percentage (0-100)
-      y: 10  # percentage (0-100)
-      width: 10  # percentage of frame width
-      height: 10  # percentage of frame height
-    type: "darkness"
-    threshold: 100
-    midi:
-      note: 60  # Middle C
-      velocity: 100
-      channel: 0
-  
-  - name: "Top Right Trigger"
-    position:
-      x: 85
+      x: 80
       y: 10
       width: 10
       height: 10
-    type: "darkness"
+    type: "brightness"
     threshold: 100
+    midi:
+      note: 64  # Middle C
+      velocity: 100
+      channel: 0
+  
+  - name: "B"
+    position:
+      x: 80
+      y: 40
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 120
     midi:
       note: 62  # D
       velocity: 100
       channel: 0
   
-  - name: "Bottom Center Trigger"
+  - name: "C"
     position:
-      x: 47.5
+      x: 80
       y: 70
       width: 10
       height: 10
-    type: "darkness"
-    threshold: 100
+    type: "brightness"
+    threshold: 120
     midi:
-      note: 64  # E
+      note: 60  # E
       velocity: 100
+      channel: 0
+
+  - name: "Range Trigger"
+    position:
+      x: 10
+      y: 70
+      width: 10
+      height: 30
+    type: "range"
+    min: 180
+    max: 100
+    midi:
+      cc: 25
       channel: 0
