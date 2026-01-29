@@ -77,6 +77,25 @@ class MIDIController:
         del self.midi_out
 
 
+class MIDIManager:
+    """Manages MIDI controllers for multiple devices."""
+
+    def __init__(self, default_device_name=None):
+        self.default_device_name = default_device_name
+        self.controllers = {}
+
+    def get_controller(self, device_name=None):
+        resolved_name = device_name if device_name is not None else self.default_device_name
+        if resolved_name not in self.controllers:
+            self.controllers[resolved_name] = MIDIController(device_name=resolved_name)
+        return self.controllers[resolved_name]
+
+    def close_all(self):
+        for controller in self.controllers.values():
+            controller.close()
+        self.controllers = {}
+
+
 class Trigger:
     """Represents a visual trigger area and its MIDI mapping."""
     
@@ -108,6 +127,7 @@ class Trigger:
         self.range_min = config.get('min')
         self.range_max = config.get('max')
         self.midi_config = config['midi']
+        self.device_name = config.get('device')
         
         # Load debounce and throttle parameters (per-trigger or global defaults)
         global_defaults = global_defaults or {}
@@ -278,8 +298,8 @@ class Trigger:
             # Calculate average difference between current and previous frame IN THE ROI ONLY
             current_roi = self._extract_roi_grayscale(frame, gray_frame, x, y, w, h)
             
-            # If no previous frame, store current ROI and return False
-            if self.previous_roi is None:
+            # If no previous frame or ROI size changed, store current ROI and return False
+            if self.previous_roi is None or self.previous_roi.shape != current_roi.shape:
                 self.previous_roi = current_roi.copy()
                 self.detected_value = 0.0
                 return False
@@ -435,9 +455,11 @@ class VideoMIDITrigger:
         
         self._load_config()
         
-        # Initialize MIDI controller (device changes require restart)
+        # Initialize MIDI controllers (device changes require restart for global default)
         device_name = self.config.get('device')
-        self.midi = MIDIController(device_name=device_name)
+        self.midi_manager = MIDIManager(default_device_name=device_name)
+        self.midi_manager.get_controller(None)
+        self._ensure_trigger_devices()
         
         # Initialize video capture
         self._init_capture()
@@ -473,6 +495,11 @@ class VideoMIDITrigger:
         
         # Rebuild triggers
         self.triggers = [Trigger(t, global_defaults=global_defaults) for t in self.config['triggers']]
+
+    def _ensure_trigger_devices(self):
+        for trigger in self.triggers:
+            if trigger.device_name is not None:
+                self.midi_manager.get_controller(trigger.device_name)
 
     def _init_capture(self):
         self.cap = cv2.VideoCapture(0 if self.use_camera else self.video_path)
@@ -523,6 +550,7 @@ class VideoMIDITrigger:
             }
         
         self._load_config()
+        self._ensure_trigger_devices()
         
         # Restore timing state to triggers with matching names
         for trigger in self.triggers:
@@ -556,7 +584,8 @@ class VideoMIDITrigger:
                     trigger.last_cc_value = value
                     cc = trigger.midi_config['cc']
                     channel = trigger.midi_config.get('channel', 0)
-                    self.midi.send_cc(cc, value, channel)
+                    midi = self.midi_manager.get_controller(trigger.device_name)
+                    midi.send_cc(cc, value, channel)
                 trigger.active = True
             else:
                 triggered = trigger.check_trigger(frame, gray_frame=gray_frame)
@@ -579,7 +608,8 @@ class VideoMIDITrigger:
                             note = trigger.midi_config['note']
                             velocity = trigger.get_velocity()
                             channel = trigger.midi_config['channel']
-                            self.midi.send_note_on(note, velocity, channel)
+                            midi = self.midi_manager.get_controller(trigger.device_name)
+                            midi.send_note_on(note, velocity, channel)
                             print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
                 
                 else:
@@ -601,7 +631,8 @@ class VideoMIDITrigger:
                             trigger.last_deactivated_time = current_time
                             note = trigger.midi_config['note']
                             channel = trigger.midi_config['channel']
-                            self.midi.send_note_off(note, channel)
+                            midi = self.midi_manager.get_controller(trigger.device_name)
+                            midi.send_note_off(note, channel)
                             print(f"✗ {trigger.name}: Note OFF (Note: {note})")
             
             # Draw trigger area on frame
@@ -614,7 +645,8 @@ class VideoMIDITrigger:
                 trigger.active = False
                 note = trigger.midi_config['note']
                 channel = trigger.midi_config['channel']
-                self.midi.send_note_off(note, channel)
+                midi = self.midi_manager.get_controller(trigger.device_name)
+                midi.send_note_off(note, channel)
             # Reset motion detection state
             if trigger.trigger_type == 'motion':
                 trigger.previous_roi = None
@@ -691,11 +723,12 @@ class VideoMIDITrigger:
             if trigger.active and 'note' in trigger.midi_config:
                 note = trigger.midi_config['note']
                 channel = trigger.midi_config['channel']
-                self.midi.send_note_off(note, channel)
+                midi = self.midi_manager.get_controller(trigger.device_name)
+                midi.send_note_off(note, channel)
         
         self.cap.release()
         cv2.destroyAllWindows()
-        self.midi.close()
+        self.midi_manager.close_all()
         print("Done.")
 
 
