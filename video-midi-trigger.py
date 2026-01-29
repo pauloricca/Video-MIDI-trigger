@@ -110,7 +110,7 @@ class Trigger:
         self.midi_config = config['midi']
         
         # Validate trigger parameters
-        if self.trigger_type in ('brightness', 'darkness'):
+        if self.trigger_type in ('brightness', 'darkness', 'motion'):
             if self.threshold is None:
                 raise ValueError(f"Missing 'threshold' for trigger '{self.name}'")
             if not (0 <= self.threshold <= 255):
@@ -128,7 +128,7 @@ class Trigger:
         if not (0 <= channel <= 15):
             raise ValueError(f"MIDI channel must be between 0 and 15, got {channel} for trigger '{self.name}'")
         
-        if self.trigger_type in ('brightness', 'darkness'):
+        if self.trigger_type in ('brightness', 'darkness', 'motion'):
             note = self.midi_config.get('note')
             velocity = self.midi_config.get('velocity', 100)
             if note is None:
@@ -148,6 +148,7 @@ class Trigger:
         self.last_cc_value = None
         self.range_level = 0.0
         self.roi_coords = None  # Will be set when frame size is known
+        self.previous_roi = None  # For motion detection
 
     def _avg_brightness(self, frame, gray_frame=None):
         x, y, w, h = self.roi_coords
@@ -202,6 +203,28 @@ class Trigger:
             # Calculate average brightness in the ROI
             avg_brightness = self._avg_brightness(frame, gray_frame)
             return avg_brightness <= self.threshold
+        
+        if self.trigger_type == 'motion':
+            # Calculate average difference between current and previous frame
+            if gray_frame is not None:
+                current_roi = gray_frame[y:y+h, x:x+w]
+            else:
+                roi = frame[y:y+h, x:x+w]
+                current_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            
+            # If no previous frame, store current and return False
+            if self.previous_roi is None:
+                self.previous_roi = current_roi.copy()
+                return False
+            
+            # Calculate average absolute difference
+            diff = cv2.absdiff(current_roi, self.previous_roi)
+            avg_diff = float(np.mean(diff))
+            
+            # Update previous frame
+            self.previous_roi = current_roi.copy()
+            
+            return avg_diff >= self.threshold
         
         if self.trigger_type == 'range':
             avg_brightness = self._avg_brightness(frame, gray_frame)
@@ -397,6 +420,9 @@ class VideoMIDITrigger:
                 note = trigger.midi_config['note']
                 channel = trigger.midi_config['channel']
                 self.midi.send_note_off(note, channel)
+            # Reset motion detection state
+            if trigger.trigger_type == 'motion':
+                trigger.previous_roi = None
     
     def run(self):
         """Main loop to play video and process triggers."""

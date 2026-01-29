@@ -71,8 +71,8 @@ triggers:
   - **position**: Location and size of the trigger area
     - **x, y**: Position as percentage of frame dimensions (0-100)
     - **width, height**: Size as percentage of frame dimensions (0-100)
-  - **type**: Supports "brightness", "darkness", and "range"
-  - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness)
+  - **type**: Supports "brightness", "darkness", "motion", and "range"
+  - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness), or average pixel difference (0-255) for motion detection
   - **min/max**: Brightness range (0-255) used to map CC values (range)
   - **midi**: MIDI message configuration
     - **note**: MIDI note number (0-127) for brightness/darkness
@@ -91,7 +91,8 @@ triggers:
 2. Opens the video file specified in the configuration
 3. For each frame:
    - Analyzes the brightness in each trigger area
-   - Sends MIDI Note On/Off for brightness/darkness triggers
+   - Detects motion by comparing frame differences
+   - Sends MIDI Note On/Off for brightness/darkness/motion triggers
    - Sends MIDI CC values for range triggers (mapped from min/max)
 4. Displays the video with visual overlays showing trigger areas:
    - Red rectangle: Inactive trigger
