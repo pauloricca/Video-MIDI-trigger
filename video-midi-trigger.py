@@ -84,7 +84,7 @@ class Trigger:
     ACTIVE_COLOR = (0, 255, 0)    # Green
     INACTIVE_COLOR = (0, 0, 255)  # Red
     
-    def __init__(self, config):
+    def __init__(self, config, global_defaults=None):
         self.name = config.get('name', 'Unnamed Trigger')
         
         # Validate required configuration keys
@@ -109,8 +109,19 @@ class Trigger:
         self.range_max = config.get('max')
         self.midi_config = config['midi']
         
+        # Load debounce and throttle parameters (per-trigger or global defaults)
+        global_defaults = global_defaults or {}
+        self.debounce = config.get('debounce', global_defaults.get('debounce', 0.0))
+        self.throttle = config.get('throttle', global_defaults.get('throttle', 0.0))
+        
+        # Validate debounce and throttle
+        if self.debounce < 0:
+            raise ValueError(f"Debounce must be >= 0, got {self.debounce} for trigger '{self.name}'")
+        if self.throttle < 0:
+            raise ValueError(f"Throttle must be >= 0, got {self.throttle} for trigger '{self.name}'")
+        
         # Validate trigger parameters
-        if self.trigger_type in ('brightness', 'darkness'):
+        if self.trigger_type in ('brightness', 'darkness', 'motion'):
             if self.threshold is None:
                 raise ValueError(f"Missing 'threshold' for trigger '{self.name}'")
             if not (0 <= self.threshold <= 255):
@@ -128,15 +139,58 @@ class Trigger:
         if not (0 <= channel <= 15):
             raise ValueError(f"MIDI channel must be between 0 and 15, got {channel} for trigger '{self.name}'")
         
-        if self.trigger_type in ('brightness', 'darkness'):
+        if self.trigger_type in ('brightness', 'darkness', 'motion'):
             note = self.midi_config.get('note')
-            velocity = self.midi_config.get('velocity', 100)
+            velocity_config = self.midi_config.get('velocity', 100)
             if note is None:
                 raise ValueError(f"Missing MIDI note for trigger '{self.name}'")
             if not (0 <= note <= 127):
                 raise ValueError(f"MIDI note must be between 0 and 127, got {note} for trigger '{self.name}'")
-            if not (0 <= velocity <= 127):
-                raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity} for trigger '{self.name}'")
+            
+            # Validate velocity - can be a number or a dict with min/max
+            if isinstance(velocity_config, dict):
+                # Variable velocity mode
+                if 'min' not in velocity_config or 'max' not in velocity_config:
+                    raise ValueError(f"Variable velocity must have 'min' and 'max' for trigger '{self.name}'")
+                
+                vel_min = velocity_config['min']
+                vel_max = velocity_config['max']
+                
+                if not isinstance(vel_min, (list, tuple)) or len(vel_min) != 2:
+                    raise ValueError(f"Velocity min must be [detected_value, velocity] for trigger '{self.name}'")
+                if not isinstance(vel_max, (list, tuple)) or len(vel_max) != 2:
+                    raise ValueError(f"Velocity max must be [detected_value, velocity] for trigger '{self.name}'")
+                
+                # Validate detected values are numeric
+                if not isinstance(vel_min[0], (int, float)):
+                    raise ValueError(f"Velocity min detected value must be numeric, got {type(vel_min[0])} for trigger '{self.name}'")
+                if not isinstance(vel_max[0], (int, float)):
+                    raise ValueError(f"Velocity max detected value must be numeric, got {type(vel_max[0])} for trigger '{self.name}'")
+                
+                # Validate velocity values are in range
+                if not (0 <= vel_min[1] <= 127):
+                    raise ValueError(f"Velocity min value must be between 0 and 127, got {vel_min[1]} for trigger '{self.name}'")
+                if not (0 <= vel_max[1] <= 127):
+                    raise ValueError(f"Velocity max value must be between 0 and 127, got {vel_max[1]} for trigger '{self.name}'")
+                
+                # Warn if detected value range is unusual (min >= max)
+                if vel_min[0] >= vel_max[0]:
+                    print(f"Warning: Velocity min detected value ({vel_min[0]}) >= max detected value ({vel_max[0]}) for trigger '{self.name}'")
+                
+                # Store variable velocity configuration
+                self.velocity_mode = 'variable'
+                self.velocity_min_detected = vel_min[0]
+                self.velocity_min_value = vel_min[1]
+                self.velocity_max_detected = vel_max[0]
+                self.velocity_max_value = vel_max[1]
+            else:
+                # Fixed velocity mode
+                if not isinstance(velocity_config, (int, float)):
+                    raise ValueError(f"MIDI velocity must be numeric, got {type(velocity_config)} for trigger '{self.name}'")
+                if not (0 <= velocity_config <= 127):
+                    raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity_config} for trigger '{self.name}'")
+                self.velocity_mode = 'fixed'
+                self.velocity_fixed = velocity_config
         elif self.trigger_type == 'range':
             cc = self.midi_config.get('cc')
             if cc is None:
@@ -148,6 +202,12 @@ class Trigger:
         self.last_cc_value = None
         self.range_level = 0.0
         self.roi_coords = None  # Will be set when frame size is known
+        self.previous_roi = None  # For motion detection
+        self.detected_value = 0.0  # Store the last detected value for variable velocity
+        
+        # Timing state for debounce and throttle
+        self.became_invalid_time = None  # Time when trigger condition became false
+        self.last_deactivated_time = None  # Time when trigger was actually deactivated (sent Note OFF)
 
     def _avg_brightness(self, frame, gray_frame=None):
         x, y, w, h = self.roi_coords
@@ -196,12 +256,39 @@ class Trigger:
         if self.trigger_type == 'brightness':
             # Calculate average brightness in the ROI
             avg_brightness = self._avg_brightness(frame, gray_frame)
+            self.detected_value = avg_brightness
             return avg_brightness >= self.threshold
         
         if self.trigger_type == 'darkness':
             # Calculate average brightness in the ROI
             avg_brightness = self._avg_brightness(frame, gray_frame)
+            self.detected_value = avg_brightness
             return avg_brightness <= self.threshold
+        
+        if self.trigger_type == 'motion':
+            # Calculate average difference between current and previous frame IN THE ROI ONLY
+            # Extract only the ROI portion of the frame for motion detection
+            if gray_frame is not None:
+                current_roi = gray_frame[y:y+h, x:x+w]  # Slice ROI from full frame
+            else:
+                roi = frame[y:y+h, x:x+w]  # Slice ROI from full frame
+                current_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            
+            # If no previous frame, store current ROI and return False
+            if self.previous_roi is None:
+                self.previous_roi = current_roi.copy()
+                self.detected_value = 0.0
+                return False
+            
+            # Calculate average absolute difference within the ROI only
+            diff = cv2.absdiff(current_roi, self.previous_roi)
+            avg_diff = float(np.mean(diff))
+            
+            # Update previous ROI for next frame
+            self.previous_roi = current_roi.copy()
+            
+            self.detected_value = avg_diff
+            return avg_diff >= self.threshold
         
         if self.trigger_type == 'range':
             avg_brightness = self._avg_brightness(frame, gray_frame)
@@ -216,6 +303,41 @@ class Trigger:
             return value
         
         return False
+    
+    def get_velocity(self):
+        """
+        Calculate velocity based on detected value and velocity configuration.
+        Note: This method should only be called for brightness/darkness/motion triggers.
+        Range triggers don't use velocity.
+        """
+        if not hasattr(self, 'velocity_mode'):
+            # Should not happen for properly configured triggers
+            raise RuntimeError(f"get_velocity() called on trigger '{self.name}' without velocity configuration")
+        
+        if self.velocity_mode == 'fixed':
+            return self.velocity_fixed
+        
+        # Variable velocity mode - interpolate between min and max
+        detected = self.detected_value
+        
+        # Clamp detected value to min/max range
+        if detected <= self.velocity_min_detected:
+            return self.velocity_min_value
+        if detected >= self.velocity_max_detected:
+            return self.velocity_max_value
+        
+        # Linear interpolation
+        detected_range = self.velocity_max_detected - self.velocity_min_detected
+        velocity_range = self.velocity_max_value - self.velocity_min_value
+        
+        if detected_range == 0:
+            return self.velocity_min_value
+        
+        ratio = (detected - self.velocity_min_detected) / detected_range
+        velocity = self.velocity_min_value + (ratio * velocity_range)
+        
+        # Clamp to MIDI velocity range and convert to int
+        return int(max(0, min(127, round(velocity))))
     
     def draw_on_frame(self, frame):
         """Draw the trigger area on the frame."""
@@ -297,8 +419,14 @@ class VideoMIDITrigger:
         if not self.use_camera and not os.path.exists(self.video_path):
             raise FileNotFoundError(f"Video file not found: {self.video_path}")
         
+        # Extract global defaults for triggers
+        global_defaults = {
+            'debounce': self.config.get('debounce', 0.0),
+            'throttle': self.config.get('throttle', 0.0)
+        }
+        
         # Rebuild triggers
-        self.triggers = [Trigger(t) for t in self.config['triggers']]
+        self.triggers = [Trigger(t, global_defaults=global_defaults) for t in self.config['triggers']]
 
     def _init_capture(self):
         self.cap = cv2.VideoCapture(0 if self.use_camera else self.video_path)
@@ -339,7 +467,24 @@ class VideoMIDITrigger:
         previous_source = self.config.get('source') if self.config else None
         previous_device = self.config.get('device') if self.config else None
         
+        # Save timing state from existing triggers before reload
+        timing_state = {}
+        for trigger in self.triggers:
+            timing_state[trigger.name] = {
+                'became_invalid_time': trigger.became_invalid_time,
+                'last_deactivated_time': trigger.last_deactivated_time,
+                'active': trigger.active
+            }
+        
         self._load_config()
+        
+        # Restore timing state to triggers with matching names
+        for trigger in self.triggers:
+            if trigger.name in timing_state:
+                state = timing_state[trigger.name]
+                trigger.became_invalid_time = state['became_invalid_time']
+                trigger.last_deactivated_time = state['last_deactivated_time']
+                trigger.active = state['active']
         
         # Warn if device/source changed (requires restart to take effect)
         if self.config.get('device') != previous_device:
@@ -355,7 +500,9 @@ class VideoMIDITrigger:
     
     def process_frame(self, frame):
         """Process a single frame and check all triggers."""
+        current_time = time.time()
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
         for trigger in self.triggers:
             if trigger.trigger_type == 'range':
                 value = trigger.check_trigger(frame, gray_frame=gray_frame)
@@ -368,23 +515,48 @@ class VideoMIDITrigger:
             else:
                 triggered = trigger.check_trigger(frame, gray_frame=gray_frame)
                 
-                # Handle state changes
-                if triggered and not trigger.active:
-                    # Trigger activated
-                    trigger.active = True
-                    note = trigger.midi_config['note']
-                    velocity = trigger.midi_config['velocity']
-                    channel = trigger.midi_config['channel']
-                    self.midi.send_note_on(note, velocity, channel)
-                    print(f"✓ {trigger.name}: Note ON (Note: {note})")
+                # Handle state changes with debounce and throttle logic
+                if triggered:
+                    # Reset "became invalid" time since trigger is valid again
+                    trigger.became_invalid_time = None
+                    
+                    if not trigger.active:
+                        # Check throttle: ensure enough time has passed since last deactivation
+                        can_activate = True
+                        if trigger.throttle > 0 and trigger.last_deactivated_time is not None:
+                            time_since_deactivation = current_time - trigger.last_deactivated_time
+                            can_activate = time_since_deactivation >= trigger.throttle
+                        
+                        if can_activate:
+                            # Trigger activated
+                            trigger.active = True
+                            note = trigger.midi_config['note']
+                            velocity = trigger.get_velocity()
+                            channel = trigger.midi_config['channel']
+                            self.midi.send_note_on(note, velocity, channel)
+                            print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
                 
-                elif not triggered and trigger.active:
-                    # Trigger deactivated
-                    trigger.active = False
-                    note = trigger.midi_config['note']
-                    channel = trigger.midi_config['channel']
-                    self.midi.send_note_off(note, channel)
-                    print(f"✗ {trigger.name}: Note OFF (Note: {note})")
+                else:
+                    # Trigger condition is not met
+                    # Record when the trigger became invalid (for debounce)
+                    if trigger.became_invalid_time is None and trigger.active:
+                        trigger.became_invalid_time = current_time
+                    
+                    if trigger.active:
+                        # Check debounce: ensure trigger has been invalid for debounce duration
+                        should_deactivate = True
+                        if trigger.debounce > 0 and trigger.became_invalid_time is not None:
+                            time_since_invalid = current_time - trigger.became_invalid_time
+                            should_deactivate = time_since_invalid >= trigger.debounce
+                        
+                        if should_deactivate:
+                            # Trigger deactivated
+                            trigger.active = False
+                            trigger.last_deactivated_time = current_time
+                            note = trigger.midi_config['note']
+                            channel = trigger.midi_config['channel']
+                            self.midi.send_note_off(note, channel)
+                            print(f"✗ {trigger.name}: Note OFF (Note: {note})")
             
             # Draw trigger area on frame
             trigger.draw_on_frame(frame)
@@ -397,6 +569,12 @@ class VideoMIDITrigger:
                 note = trigger.midi_config['note']
                 channel = trigger.midi_config['channel']
                 self.midi.send_note_off(note, channel)
+            # Reset motion detection state
+            if trigger.trigger_type == 'motion':
+                trigger.previous_roi = None
+            # Reset timing state for debounce and throttle
+            trigger.became_invalid_time = None
+            trigger.last_deactivated_time = None
     
     def run(self):
         """Main loop to play video and process triggers."""

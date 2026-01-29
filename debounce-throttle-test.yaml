@@ -1,0 +1,57 @@
+source: "camera"
+
+camera:
+  width: 640
+  height: 480
+  fps: 30
+
+# Global defaults for debounce and throttle
+debounce: 0.5  # Global default: wait 0.5 seconds before deactivating
+throttle: 1.0  # Global default: wait 1.0 seconds before allowing reactivation
+
+triggers:
+  # Uses global defaults (debounce: 0.5s, throttle: 1.0s)
+  - name: "Global Defaults"
+    position:
+      x: 10
+      y: 10
+      width: 15
+      height: 15
+    type: "brightness"
+    threshold: 150
+    midi:
+      note: 60  # C
+      velocity: 100
+      channel: 0
+  
+  # Custom per-trigger debounce and throttle
+  - name: "Custom Timing"
+    position:
+      x: 75
+      y: 10
+      width: 15
+      height: 15
+    type: "motion"
+    threshold: 20
+    debounce: 0.2  # Quick debounce for motion
+    throttle: 2.0  # Longer throttle to avoid rapid retriggers
+    midi:
+      note: 62  # D
+      velocity: 100
+      channel: 0
+  
+  # No debounce or throttle (set to 0)
+  - name: "Immediate Response"
+    position:
+      x: 42.5
+      y: 42.5
+      width: 15
+      height: 15
+    type: "darkness"
+    threshold: 100
+    debounce: 0
+    throttle: 0
+    midi:
+      note: 64  # E
+      velocity: 100
+      channel: 0

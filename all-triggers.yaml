@@ -1,0 +1,63 @@
+source: "camera"
+
+camera:
+  width: 640
+  height: 480
+  fps: 30
+
+triggers:
+  # Brightness trigger - activates when area is bright
+  - name: "Brightness"
+    position:
+      x: 10
+      y: 10
+      width: 15
+      height: 15
+    type: "brightness"
+    threshold: 200
+    midi:
+      note: 60  # C
+      velocity: 100
+      channel: 0
+  
+  # Darkness trigger - activates when area is dark
+  - name: "Darkness"
+    position:
+      x: 75
+      y: 10
+      width: 15
+      height: 15
+    type: "darkness"
+    threshold: 50
+    midi:
+      note: 62  # D
+      velocity: 100
+      channel: 0
+  
+  # Motion trigger - activates when there's movement
+  - name: "Motion"
+    position:
+      x: 42.5
+      y: 42.5
+      width: 15
+      height: 15
+    type: "motion"
+    threshold: 15  # Average pixel difference
+    midi:
+      note: 64  # E
+      velocity: 100
+      channel: 0
+  
+  # Range trigger - sends CC values based on brightness
+  - name: "Range"
+    position:
+      x: 10
+      y: 75
+      width: 10
+      height: 20
+    type: "range"
+    min: 0
+    max: 255
+    midi:
+      cc: 20
+      channel: 0

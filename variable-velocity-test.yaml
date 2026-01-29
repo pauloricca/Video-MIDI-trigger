@@ -1,0 +1,57 @@
+source: "camera"
+
+camera:
+  width: 640
+  height: 480
+  fps: 30
+
+triggers:
+  # Motion trigger with variable velocity
+  # Low motion (2) maps to low velocity (80)
+  # High motion (20) maps to high velocity (127)
+  - name: "Motion Variable Velocity"
+    position:
+      x: 20
+      y: 20
+      width: 20
+      height: 20
+    type: "motion"
+    threshold: 5
+    midi:
+      note: 60  # C
+      velocity:
+        min: [2, 80]    # [detected_motion, velocity]
+        max: [20, 127]  # [detected_motion, velocity]
+      channel: 0
+  
+  # Brightness trigger with variable velocity
+  # Low brightness (50) maps to low velocity (60)
+  # High brightness (200) maps to high velocity (120)
+  - name: "Brightness Variable Velocity"
+    position:
+      x: 60
+      y: 20
+      width: 20
+      height: 20
+    type: "brightness"
+    threshold: 100
+    midi:
+      note: 62  # D
+      velocity:
+        min: [50, 60]   # [detected_brightness, velocity]
+        max: [200, 120] # [detected_brightness, velocity]
+      channel: 0
+  
+  # Fixed velocity trigger (traditional behavior)
+  - name: "Fixed Velocity"
+    position:
+      x: 40
+      y: 60
+      width: 20
+      height: 20
+    type: "darkness"
+    threshold: 100
+    midi:
+      note: 64  # E
+      velocity: 100  # Fixed velocity
+      channel: 0
