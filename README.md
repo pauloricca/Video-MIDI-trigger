@@ -43,6 +43,10 @@ Create a YAML configuration file (e.g., `road.yaml`) with the following structur
 ```yaml
 source: "path/to/your/video.mp4"
 
+# Optional: Global defaults for all triggers
+debounce: 0.5  # Wait 0.5s before deactivating (prevents flickering)
+throttle: 1.0  # Wait 1.0s before allowing reactivation
+
 triggers:
   - name: "Top Left Trigger"
     position:
@@ -52,6 +56,8 @@ triggers:
       height: 5      # Height in percentage
     type: "brightness"
     threshold: 200   # Brightness threshold (0-255)
+    debounce: 0.3    # Optional: Override global debounce for this trigger
+    throttle: 2.0    # Optional: Override global throttle for this trigger
     midi:
       note: 60       # MIDI note number (0-127)
       velocity: 100  # Note velocity (0-127)
@@ -83,6 +89,29 @@ triggers:
     - **velocity**: Note velocity (0-127) for brightness/darkness/motion
     - **cc**: MIDI CC number (0-127) for range
     - **channel**: MIDI channel (0-15)
+
+### Debounce and Throttle Behavior
+
+**Debounce** prevents triggers from deactivating too quickly:
+- When a trigger condition becomes false, the trigger waits for the debounce duration before sending Note OFF
+- If the trigger becomes valid again during the debounce period, Note OFF is never sent
+- Useful for preventing flickering when a trigger oscillates around the threshold
+
+**Throttle** prevents triggers from reactivating too quickly:
+- After a trigger deactivates (sends Note OFF), it cannot reactivate for the throttle duration
+- Even if the trigger condition becomes true during the throttle period, Note ON is not sent
+- Useful for preventing rapid retriggering in noisy conditions
+
+**Example Timeline:**
+```
+Time:     0s    1s    2s    3s    4s    5s    6s
+Condition: ON   OFF   ON    ON    OFF   ON    ON
+Debounce=1s, Throttle=2s:
+MIDI:     ON         OFF              (blocked) ON
+          ^          ^                          ^
+          |          |                          |
+      Immediate  Waits 1s              Waits 2s from OFF
+```
 
 ## Controls
 

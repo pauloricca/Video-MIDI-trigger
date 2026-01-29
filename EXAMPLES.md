@@ -38,6 +38,20 @@ A comprehensive example showing all four trigger types in a single configuration
 
 This example is useful for understanding how different trigger types work together and can be configured.
 
+## debounce-throttle-test.yaml
+
+Demonstrates the use of debounce and throttle parameters to control trigger timing:
+
+1. **Global Defaults Trigger** - Uses global debounce (0.5s) and throttle (1.0s) settings
+2. **Custom Timing Trigger** - Custom debounce (0.2s) and throttle (2.0s) for motion detection
+3. **Immediate Response Trigger** - Debounce and throttle disabled (0s) for instant response
+
+**Debounce**: Prevents triggers from deactivating too quickly. When a trigger becomes invalid, it waits this duration before sending Note OFF. Useful for preventing flickering.
+
+**Throttle**: Prevents triggers from reactivating too quickly. After deactivation, the trigger waits this duration before it can reactivate. Useful for preventing rapid retriggering.
+
+Both parameters can be set globally (affecting all triggers) and overridden per-trigger. They work with brightness, darkness, and motion trigger types.
+
 ## Creating Your Own Configuration
 
 To create a custom configuration:
