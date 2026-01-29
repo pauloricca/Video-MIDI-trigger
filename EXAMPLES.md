@@ -52,6 +52,28 @@ Demonstrates the use of debounce and throttle parameters to control trigger timi
 
 Both parameters can be set globally (affecting all triggers) and overridden per-trigger. They work with brightness, darkness, and motion trigger types.
 
+## variable-velocity-test.yaml
+
+Demonstrates variable velocity based on detected values:
+
+1. **Motion Variable Velocity** - Velocity changes based on motion intensity (subtle motion → soft velocity, strong motion → loud velocity)
+2. **Brightness Variable Velocity** - Velocity scales with brightness level
+3. **Fixed Velocity** - Traditional fixed velocity for comparison
+
+**Variable Velocity Format:**
+```yaml
+velocity:
+  min: [detected_value, velocity_value]  # e.g., [2, 80]
+  max: [detected_value, velocity_value]  # e.g., [20, 127]
+```
+
+The first value in each array is the detected brightness/motion/darkness value, and the second is the MIDI velocity to use. Values are interpolated linearly between min and max, and clamped outside the range.
+
+This is particularly useful for:
+- **Motion triggers**: Louder notes for more vigorous movement
+- **Brightness triggers**: Velocity matching light intensity
+- Creating more expressive and dynamic MIDI performances
+
 ## Creating Your Own Configuration
 
 To create a custom configuration:

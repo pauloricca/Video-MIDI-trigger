@@ -60,8 +60,23 @@ triggers:
     throttle: 2.0    # Optional: Override global throttle for this trigger
     midi:
       note: 60       # MIDI note number (0-127)
-      velocity: 100  # Note velocity (0-127)
+      velocity: 100  # Fixed velocity (0-127)
       channel: 0     # MIDI channel (0-15)
+  
+  - name: "Motion Trigger with Variable Velocity"
+    position:
+      x: 50
+      y: 50
+      width: 10
+      height: 10
+    type: "motion"
+    threshold: 5
+    midi:
+      note: 62       # MIDI note number
+      velocity:      # Variable velocity based on detected motion
+        min: [2, 80]    # Low motion (2) -> low velocity (80)
+        max: [20, 127]  # High motion (20) -> high velocity (127)
+      channel: 0
 ```
 
 ### Configuration Parameters
@@ -86,7 +101,16 @@ triggers:
   - **throttle** (optional): Per-trigger throttle time in seconds. After deactivation, the trigger will wait this duration before it can reactivate. Overrides global default.
   - **midi**: MIDI message configuration
     - **note**: MIDI note number (0-127) for brightness/darkness/motion
-    - **velocity**: Note velocity (0-127) for brightness/darkness/motion
+    - **velocity**: Note velocity for brightness/darkness/motion. Can be:
+      - **Fixed velocity**: A number between 0-127 (e.g., `velocity: 100`)
+      - **Variable velocity**: A dict with min/max mappings based on detected value:
+        ```yaml
+        velocity:
+          min: [detected_value, velocity_value]  # e.g., [2, 80]
+          max: [detected_value, velocity_value]  # e.g., [20, 127]
+        ```
+        The velocity will be interpolated between min and max based on the detected brightness/motion value.
+        Values outside the range are clamped to min/max velocity.
     - **cc**: MIDI CC number (0-127) for range
     - **channel**: MIDI channel (0-15)
 
@@ -112,6 +136,39 @@ MIDI:     ON         OFF              (blocked) ON
           |          |                          |
       Immediate  Waits 1s              Waits 2s from OFF
 ```
+
+### Variable Velocity
+
+**Variable velocity** allows the MIDI note velocity to change dynamically based on the detected value (brightness, darkness, or motion).
+
+**Configuration:**
+```yaml
+velocity:
+  min: [detected_value, velocity_value]  # e.g., [2, 80]
+  max: [detected_value, velocity_value]  # e.g., [20, 127]
+```
+
+**How it works:**
+- When the detected value is at or below `min[0]`, velocity is set to `min[1]`
+- When the detected value is at or above `max[0]`, velocity is set to `max[1]`
+- For values in between, velocity is linearly interpolated
+- Velocity is always clamped to the MIDI range (0-127)
+
+**Example for motion trigger:**
+```yaml
+velocity:
+  min: [2, 80]    # Subtle motion (2) -> soft velocity (80)
+  max: [20, 127]  # Strong motion (20) -> loud velocity (127)
+```
+- If motion detected = 2 → velocity = 80
+- If motion detected = 11 → velocity ≈ 104 (interpolated)
+- If motion detected = 20 → velocity = 127
+- If motion detected = 25 → velocity = 127 (clamped to max)
+
+This is particularly useful for:
+- **Motion triggers**: Louder notes for more vigorous movement
+- **Brightness triggers**: Velocity matching light intensity
+- **Darkness triggers**: Dynamic response to shadow depth
 
 ## Controls
 

@@ -254,24 +254,25 @@ class Trigger:
             return avg_brightness <= self.threshold
         
         if self.trigger_type == 'motion':
-            # Calculate average difference between current and previous frame
+            # Calculate average difference between current and previous frame IN THE ROI ONLY
+            # Extract only the ROI portion of the frame for motion detection
             if gray_frame is not None:
-                current_roi = gray_frame[y:y+h, x:x+w]
+                current_roi = gray_frame[y:y+h, x:x+w]  # Slice ROI from full frame
             else:
-                roi = frame[y:y+h, x:x+w]
+                roi = frame[y:y+h, x:x+w]  # Slice ROI from full frame
                 current_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             
-            # If no previous frame, store current and return False
+            # If no previous frame, store current ROI and return False
             if self.previous_roi is None:
                 self.previous_roi = current_roi.copy()
                 self.detected_value = 0.0
                 return False
             
-            # Calculate average absolute difference
+            # Calculate average absolute difference within the ROI only
             diff = cv2.absdiff(current_roi, self.previous_roi)
             avg_diff = float(np.mean(diff))
             
-            # Update previous frame
+            # Update previous ROI for next frame
             self.previous_roi = current_roi.copy()
             
             self.detected_value = avg_diff
