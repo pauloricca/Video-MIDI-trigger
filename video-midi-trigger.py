@@ -162,7 +162,6 @@ class Trigger:
         self.previous_roi = None  # For motion detection
         
         # Timing state for debounce and throttle
-        self.last_triggered_time = None  # Time when trigger condition became true
         self.became_invalid_time = None  # Time when trigger condition became false
         self.last_deactivated_time = None  # Time when trigger was actually deactivated (sent Note OFF)
 
@@ -384,7 +383,24 @@ class VideoMIDITrigger:
         previous_source = self.config.get('source') if self.config else None
         previous_device = self.config.get('device') if self.config else None
         
+        # Save timing state from existing triggers before reload
+        timing_state = {}
+        for trigger in self.triggers:
+            timing_state[trigger.name] = {
+                'became_invalid_time': trigger.became_invalid_time,
+                'last_deactivated_time': trigger.last_deactivated_time,
+                'active': trigger.active
+            }
+        
         self._load_config()
+        
+        # Restore timing state to triggers with matching names
+        for trigger in self.triggers:
+            if trigger.name in timing_state:
+                state = timing_state[trigger.name]
+                trigger.became_invalid_time = state['became_invalid_time']
+                trigger.last_deactivated_time = state['last_deactivated_time']
+                trigger.active = state['active']
         
         # Warn if device/source changed (requires restart to take effect)
         if self.config.get('device') != previous_device:
@@ -417,10 +433,6 @@ class VideoMIDITrigger:
                 
                 # Handle state changes with debounce and throttle logic
                 if triggered:
-                    # Update the time when trigger condition became true
-                    if trigger.last_triggered_time is None:
-                        trigger.last_triggered_time = current_time
-                    
                     # Reset "became invalid" time since trigger is valid again
                     trigger.became_invalid_time = None
                     
@@ -445,9 +457,6 @@ class VideoMIDITrigger:
                     # Record when the trigger became invalid (for debounce)
                     if trigger.became_invalid_time is None and trigger.active:
                         trigger.became_invalid_time = current_time
-                    
-                    # Reset "last triggered" time since trigger is no longer valid
-                    trigger.last_triggered_time = None
                     
                     if trigger.active:
                         # Check debounce: ensure trigger has been invalid for debounce duration
@@ -480,7 +489,6 @@ class VideoMIDITrigger:
             if trigger.trigger_type == 'motion':
                 trigger.previous_roi = None
             # Reset timing state for debounce and throttle
-            trigger.last_triggered_time = None
             trigger.became_invalid_time = None
             trigger.last_deactivated_time = None
     
