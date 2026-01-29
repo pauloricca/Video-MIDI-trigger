@@ -84,7 +84,7 @@ class Trigger:
     ACTIVE_COLOR = (0, 255, 0)    # Green
     INACTIVE_COLOR = (0, 0, 255)  # Red
     
-    def __init__(self, config):
+    def __init__(self, config, global_defaults=None):
         self.name = config.get('name', 'Unnamed Trigger')
         
         # Validate required configuration keys
@@ -108,6 +108,17 @@ class Trigger:
         self.range_min = config.get('min')
         self.range_max = config.get('max')
         self.midi_config = config['midi']
+        
+        # Load debounce and throttle parameters (per-trigger or global defaults)
+        global_defaults = global_defaults or {}
+        self.debounce = config.get('debounce', global_defaults.get('debounce', 0.0))
+        self.throttle = config.get('throttle', global_defaults.get('throttle', 0.0))
+        
+        # Validate debounce and throttle
+        if self.debounce < 0:
+            raise ValueError(f"Debounce must be >= 0, got {self.debounce} for trigger '{self.name}'")
+        if self.throttle < 0:
+            raise ValueError(f"Throttle must be >= 0, got {self.throttle} for trigger '{self.name}'")
         
         # Validate trigger parameters
         if self.trigger_type in ('brightness', 'darkness', 'motion'):
@@ -149,6 +160,11 @@ class Trigger:
         self.range_level = 0.0
         self.roi_coords = None  # Will be set when frame size is known
         self.previous_roi = None  # For motion detection
+        
+        # Timing state for debounce and throttle
+        self.last_triggered_time = None  # Time when trigger condition became true
+        self.became_invalid_time = None  # Time when trigger condition became false
+        self.last_deactivated_time = None  # Time when trigger was actually deactivated (sent Note OFF)
 
     def _avg_brightness(self, frame, gray_frame=None):
         x, y, w, h = self.roi_coords
@@ -320,8 +336,14 @@ class VideoMIDITrigger:
         if not self.use_camera and not os.path.exists(self.video_path):
             raise FileNotFoundError(f"Video file not found: {self.video_path}")
         
+        # Extract global defaults for triggers
+        global_defaults = {
+            'debounce': self.config.get('debounce', 0.0),
+            'throttle': self.config.get('throttle', 0.0)
+        }
+        
         # Rebuild triggers
-        self.triggers = [Trigger(t) for t in self.config['triggers']]
+        self.triggers = [Trigger(t, global_defaults=global_defaults) for t in self.config['triggers']]
 
     def _init_capture(self):
         self.cap = cv2.VideoCapture(0 if self.use_camera else self.video_path)
@@ -378,7 +400,9 @@ class VideoMIDITrigger:
     
     def process_frame(self, frame):
         """Process a single frame and check all triggers."""
+        current_time = time.time()
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
         for trigger in self.triggers:
             if trigger.trigger_type == 'range':
                 value = trigger.check_trigger(frame, gray_frame=gray_frame)
@@ -391,23 +415,55 @@ class VideoMIDITrigger:
             else:
                 triggered = trigger.check_trigger(frame, gray_frame=gray_frame)
                 
-                # Handle state changes
-                if triggered and not trigger.active:
-                    # Trigger activated
-                    trigger.active = True
-                    note = trigger.midi_config['note']
-                    velocity = trigger.midi_config['velocity']
-                    channel = trigger.midi_config['channel']
-                    self.midi.send_note_on(note, velocity, channel)
-                    print(f"✓ {trigger.name}: Note ON (Note: {note})")
+                # Handle state changes with debounce and throttle logic
+                if triggered:
+                    # Update the time when trigger condition became true
+                    if trigger.last_triggered_time is None:
+                        trigger.last_triggered_time = current_time
+                    
+                    # Reset "became invalid" time since trigger is valid again
+                    trigger.became_invalid_time = None
+                    
+                    if not trigger.active:
+                        # Check throttle: ensure enough time has passed since last deactivation
+                        can_activate = True
+                        if trigger.throttle > 0 and trigger.last_deactivated_time is not None:
+                            time_since_deactivation = current_time - trigger.last_deactivated_time
+                            can_activate = time_since_deactivation >= trigger.throttle
+                        
+                        if can_activate:
+                            # Trigger activated
+                            trigger.active = True
+                            note = trigger.midi_config['note']
+                            velocity = trigger.midi_config['velocity']
+                            channel = trigger.midi_config['channel']
+                            self.midi.send_note_on(note, velocity, channel)
+                            print(f"✓ {trigger.name}: Note ON (Note: {note})")
                 
-                elif not triggered and trigger.active:
-                    # Trigger deactivated
-                    trigger.active = False
-                    note = trigger.midi_config['note']
-                    channel = trigger.midi_config['channel']
-                    self.midi.send_note_off(note, channel)
-                    print(f"✗ {trigger.name}: Note OFF (Note: {note})")
+                else:
+                    # Trigger condition is not met
+                    # Record when the trigger became invalid (for debounce)
+                    if trigger.became_invalid_time is None and trigger.active:
+                        trigger.became_invalid_time = current_time
+                    
+                    # Reset "last triggered" time since trigger is no longer valid
+                    trigger.last_triggered_time = None
+                    
+                    if trigger.active:
+                        # Check debounce: ensure trigger has been invalid for debounce duration
+                        should_deactivate = True
+                        if trigger.debounce > 0 and trigger.became_invalid_time is not None:
+                            time_since_invalid = current_time - trigger.became_invalid_time
+                            should_deactivate = time_since_invalid >= trigger.debounce
+                        
+                        if should_deactivate:
+                            # Trigger deactivated
+                            trigger.active = False
+                            trigger.last_deactivated_time = current_time
+                            note = trigger.midi_config['note']
+                            channel = trigger.midi_config['channel']
+                            self.midi.send_note_off(note, channel)
+                            print(f"✗ {trigger.name}: Note OFF (Note: {note})")
             
             # Draw trigger area on frame
             trigger.draw_on_frame(frame)
@@ -423,6 +479,10 @@ class VideoMIDITrigger:
             # Reset motion detection state
             if trigger.trigger_type == 'motion':
                 trigger.previous_roi = None
+            # Reset timing state for debounce and throttle
+            trigger.last_triggered_time = None
+            trigger.became_invalid_time = None
+            trigger.last_deactivated_time = None
     
     def run(self):
         """Main loop to play video and process triggers."""

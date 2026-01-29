@@ -65,6 +65,8 @@ triggers:
   - **width**: Camera capture width (default 640)
   - **height**: Camera capture height (default 480)
   - **fps**: Target camera FPS (default 30)
+- **debounce** (optional): Global default debounce time in seconds (default 0). Prevents triggers from deactivating too quickly.
+- **throttle** (optional): Global default throttle time in seconds (default 0). Prevents triggers from reactivating too quickly.
 - **Live reload**: The app watches the YAML file and reloads trigger values on change. Changing `device` or `source` requires a restart to take effect.
 - **triggers**: List of trigger definitions
   - **name**: Descriptive name for the trigger
@@ -74,9 +76,11 @@ triggers:
   - **type**: Supports "brightness", "darkness", "motion", and "range"
   - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness), or average pixel difference (0-255) for motion detection
   - **min/max**: Brightness range (0-255) used to map CC values (range)
+  - **debounce** (optional): Per-trigger debounce time in seconds. When a trigger becomes invalid, it will wait this duration before sending Note OFF. Overrides global default.
+  - **throttle** (optional): Per-trigger throttle time in seconds. After deactivation, the trigger will wait this duration before it can reactivate. Overrides global default.
   - **midi**: MIDI message configuration
-    - **note**: MIDI note number (0-127) for brightness/darkness
-    - **velocity**: Note velocity (0-127) for brightness/darkness
+    - **note**: MIDI note number (0-127) for brightness/darkness/motion
+    - **velocity**: Note velocity (0-127) for brightness/darkness/motion
     - **cc**: MIDI CC number (0-127) for range
     - **channel**: MIDI channel (0-15)
 
