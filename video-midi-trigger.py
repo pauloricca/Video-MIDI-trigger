@@ -141,13 +141,44 @@ class Trigger:
         
         if self.trigger_type in ('brightness', 'darkness', 'motion'):
             note = self.midi_config.get('note')
-            velocity = self.midi_config.get('velocity', 100)
+            velocity_config = self.midi_config.get('velocity', 100)
             if note is None:
                 raise ValueError(f"Missing MIDI note for trigger '{self.name}'")
             if not (0 <= note <= 127):
                 raise ValueError(f"MIDI note must be between 0 and 127, got {note} for trigger '{self.name}'")
-            if not (0 <= velocity <= 127):
-                raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity} for trigger '{self.name}'")
+            
+            # Validate velocity - can be a number or a dict with min/max
+            if isinstance(velocity_config, dict):
+                # Variable velocity mode
+                if 'min' not in velocity_config or 'max' not in velocity_config:
+                    raise ValueError(f"Variable velocity must have 'min' and 'max' for trigger '{self.name}'")
+                
+                vel_min = velocity_config['min']
+                vel_max = velocity_config['max']
+                
+                if not isinstance(vel_min, (list, tuple)) or len(vel_min) != 2:
+                    raise ValueError(f"Velocity min must be [detected_value, velocity] for trigger '{self.name}'")
+                if not isinstance(vel_max, (list, tuple)) or len(vel_max) != 2:
+                    raise ValueError(f"Velocity max must be [detected_value, velocity] for trigger '{self.name}'")
+                
+                # Validate velocity values are in range
+                if not (0 <= vel_min[1] <= 127):
+                    raise ValueError(f"Velocity min value must be between 0 and 127, got {vel_min[1]} for trigger '{self.name}'")
+                if not (0 <= vel_max[1] <= 127):
+                    raise ValueError(f"Velocity max value must be between 0 and 127, got {vel_max[1]} for trigger '{self.name}'")
+                
+                # Store variable velocity configuration
+                self.velocity_mode = 'variable'
+                self.velocity_min_detected = vel_min[0]
+                self.velocity_min_value = vel_min[1]
+                self.velocity_max_detected = vel_max[0]
+                self.velocity_max_value = vel_max[1]
+            else:
+                # Fixed velocity mode
+                if not (0 <= velocity_config <= 127):
+                    raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity_config} for trigger '{self.name}'")
+                self.velocity_mode = 'fixed'
+                self.velocity_fixed = velocity_config
         elif self.trigger_type == 'range':
             cc = self.midi_config.get('cc')
             if cc is None:
@@ -160,6 +191,7 @@ class Trigger:
         self.range_level = 0.0
         self.roi_coords = None  # Will be set when frame size is known
         self.previous_roi = None  # For motion detection
+        self.detected_value = 0.0  # Store the last detected value for variable velocity
         
         # Timing state for debounce and throttle
         self.became_invalid_time = None  # Time when trigger condition became false
@@ -212,11 +244,13 @@ class Trigger:
         if self.trigger_type == 'brightness':
             # Calculate average brightness in the ROI
             avg_brightness = self._avg_brightness(frame, gray_frame)
+            self.detected_value = avg_brightness
             return avg_brightness >= self.threshold
         
         if self.trigger_type == 'darkness':
             # Calculate average brightness in the ROI
             avg_brightness = self._avg_brightness(frame, gray_frame)
+            self.detected_value = avg_brightness
             return avg_brightness <= self.threshold
         
         if self.trigger_type == 'motion':
@@ -230,6 +264,7 @@ class Trigger:
             # If no previous frame, store current and return False
             if self.previous_roi is None:
                 self.previous_roi = current_roi.copy()
+                self.detected_value = 0.0
                 return False
             
             # Calculate average absolute difference
@@ -239,6 +274,7 @@ class Trigger:
             # Update previous frame
             self.previous_roi = current_roi.copy()
             
+            self.detected_value = avg_diff
             return avg_diff >= self.threshold
         
         if self.trigger_type == 'range':
@@ -254,6 +290,33 @@ class Trigger:
             return value
         
         return False
+    
+    def get_velocity(self):
+        """Calculate velocity based on detected value and velocity configuration."""
+        if self.velocity_mode == 'fixed':
+            return self.velocity_fixed
+        
+        # Variable velocity mode - interpolate between min and max
+        detected = self.detected_value
+        
+        # Clamp detected value to min/max range
+        if detected <= self.velocity_min_detected:
+            return self.velocity_min_value
+        if detected >= self.velocity_max_detected:
+            return self.velocity_max_value
+        
+        # Linear interpolation
+        detected_range = self.velocity_max_detected - self.velocity_min_detected
+        velocity_range = self.velocity_max_value - self.velocity_min_value
+        
+        if detected_range == 0:
+            return self.velocity_min_value
+        
+        ratio = (detected - self.velocity_min_detected) / detected_range
+        velocity = self.velocity_min_value + (ratio * velocity_range)
+        
+        # Clamp to MIDI velocity range and convert to int
+        return int(max(0, min(127, round(velocity))))
     
     def draw_on_frame(self, frame):
         """Draw the trigger area on the frame."""
@@ -447,10 +510,10 @@ class VideoMIDITrigger:
                             # Trigger activated
                             trigger.active = True
                             note = trigger.midi_config['note']
-                            velocity = trigger.midi_config['velocity']
+                            velocity = trigger.get_velocity()
                             channel = trigger.midi_config['channel']
                             self.midi.send_note_on(note, velocity, channel)
-                            print(f"✓ {trigger.name}: Note ON (Note: {note})")
+                            print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
                 
                 else:
                     # Trigger condition is not met
