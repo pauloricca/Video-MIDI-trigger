@@ -161,11 +161,21 @@ class Trigger:
                 if not isinstance(vel_max, (list, tuple)) or len(vel_max) != 2:
                     raise ValueError(f"Velocity max must be [detected_value, velocity] for trigger '{self.name}'")
                 
+                # Validate detected values are numeric
+                if not isinstance(vel_min[0], (int, float)):
+                    raise ValueError(f"Velocity min detected value must be numeric, got {type(vel_min[0])} for trigger '{self.name}'")
+                if not isinstance(vel_max[0], (int, float)):
+                    raise ValueError(f"Velocity max detected value must be numeric, got {type(vel_max[0])} for trigger '{self.name}'")
+                
                 # Validate velocity values are in range
                 if not (0 <= vel_min[1] <= 127):
                     raise ValueError(f"Velocity min value must be between 0 and 127, got {vel_min[1]} for trigger '{self.name}'")
                 if not (0 <= vel_max[1] <= 127):
                     raise ValueError(f"Velocity max value must be between 0 and 127, got {vel_max[1]} for trigger '{self.name}'")
+                
+                # Warn if detected value range is unusual (min >= max)
+                if vel_min[0] >= vel_max[0]:
+                    print(f"Warning: Velocity min detected value ({vel_min[0]}) >= max detected value ({vel_max[0]}) for trigger '{self.name}'")
                 
                 # Store variable velocity configuration
                 self.velocity_mode = 'variable'
@@ -175,6 +185,8 @@ class Trigger:
                 self.velocity_max_value = vel_max[1]
             else:
                 # Fixed velocity mode
+                if not isinstance(velocity_config, (int, float)):
+                    raise ValueError(f"MIDI velocity must be numeric, got {type(velocity_config)} for trigger '{self.name}'")
                 if not (0 <= velocity_config <= 127):
                     raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity_config} for trigger '{self.name}'")
                 self.velocity_mode = 'fixed'
@@ -293,7 +305,15 @@ class Trigger:
         return False
     
     def get_velocity(self):
-        """Calculate velocity based on detected value and velocity configuration."""
+        """
+        Calculate velocity based on detected value and velocity configuration.
+        Note: This method should only be called for brightness/darkness/motion triggers.
+        Range triggers don't use velocity.
+        """
+        if not hasattr(self, 'velocity_mode'):
+            # Should not happen for properly configured triggers
+            raise RuntimeError(f"get_velocity() called on trigger '{self.name}' without velocity configuration")
+        
         if self.velocity_mode == 'fixed':
             return self.velocity_fixed
         
