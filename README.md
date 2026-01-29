@@ -77,6 +77,19 @@ triggers:
         min: [2, 80]    # Low motion (2) -> low velocity (80)
         max: [20, 127]  # High motion (20) -> high velocity (127)
       channel: 0
+  
+  - name: "Difference Trigger"
+    position:
+      x: 50
+      y: 70
+      width: 10
+      height: 10
+    type: "difference"
+    threshold: 10
+    midi:
+      note: 64       # MIDI note number
+      velocity: 100
+      channel: 0
 ```
 
 ### Configuration Parameters
@@ -94,14 +107,19 @@ triggers:
   - **position**: Location and size of the trigger area
     - **x, y**: Position as percentage of frame dimensions (0-100)
     - **width, height**: Size as percentage of frame dimensions (0-100)
-  - **type**: Supports "brightness", "darkness", "motion", and "range"
-  - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness), or average pixel difference (0-255) for motion detection
+  - **type**: Supports "brightness", "darkness", "motion", "difference", and "range"
+    - **brightness**: Triggers when the area becomes brighter than the threshold
+    - **darkness**: Triggers when the area becomes darker than the threshold
+    - **motion**: Triggers when the difference from the previous frame exceeds the threshold
+    - **difference**: Triggers when the difference from the first frame exceeds the threshold (reset with 'r' key)
+    - **range**: Maps brightness to a MIDI CC value
+  - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness), or average pixel difference (0-255) for motion/difference detection
   - **min/max**: Brightness range (0-255) used to map CC values (range)
   - **debounce** (optional): Per-trigger debounce time in seconds. When a trigger becomes invalid, it will wait this duration before sending Note OFF. Overrides global default.
   - **throttle** (optional): Per-trigger throttle time in seconds. After deactivation, the trigger will wait this duration before it can reactivate. Overrides global default.
   - **midi**: MIDI message configuration
-    - **note**: MIDI note number (0-127) for brightness/darkness/motion
-    - **velocity**: Note velocity for brightness/darkness/motion. Can be:
+    - **note**: MIDI note number (0-127) for brightness/darkness/motion/difference
+    - **velocity**: Note velocity for brightness/darkness/motion/difference. Can be:
       - **Fixed velocity**: A number between 0-127 (e.g., `velocity: 100`)
       - **Variable velocity**: A dict with min/max mappings based on detected value:
         ```yaml
@@ -173,7 +191,7 @@ This is particularly useful for:
 ## Controls
 
 - **q**: Quit the application
-- **r**: Restart the video from the beginning
+- **r**: Reset the first frame for difference triggers
 
 ## How it Works
 
@@ -181,8 +199,8 @@ This is particularly useful for:
 2. Opens the video file specified in the configuration
 3. For each frame:
    - Analyzes the brightness in each trigger area
-   - Detects motion by comparing frame differences
-   - Sends MIDI Note On/Off for brightness/darkness/motion triggers
+   - Detects motion by comparing frame differences (previous frame for "motion", first frame for "difference")
+   - Sends MIDI Note On/Off for brightness/darkness/motion/difference triggers
    - Sends MIDI CC values for range triggers (mapped from min/max)
 4. Displays the video with visual overlays showing trigger areas:
    - Red rectangle: Inactive trigger

@@ -121,7 +121,7 @@ class Trigger:
             raise ValueError(f"Throttle must be >= 0, got {self.throttle} for trigger '{self.name}'")
         
         # Validate trigger parameters
-        if self.trigger_type in ('brightness', 'darkness', 'motion'):
+        if self.trigger_type in ('brightness', 'darkness', 'motion', 'difference'):
             if self.threshold is None:
                 raise ValueError(f"Missing 'threshold' for trigger '{self.name}'")
             if not (0 <= self.threshold <= 255):
@@ -139,7 +139,7 @@ class Trigger:
         if not (0 <= channel <= 15):
             raise ValueError(f"MIDI channel must be between 0 and 15, got {channel} for trigger '{self.name}'")
         
-        if self.trigger_type in ('brightness', 'darkness', 'motion'):
+        if self.trigger_type in ('brightness', 'darkness', 'motion', 'difference'):
             note = self.midi_config.get('note')
             velocity_config = self.midi_config.get('velocity', 100)
             if note is None:
@@ -203,6 +203,7 @@ class Trigger:
         self.range_level = 0.0
         self.roi_coords = None  # Will be set when frame size is known
         self.previous_roi = None  # For motion detection
+        self.first_roi = None  # For difference detection
         self.detected_value = 0.0  # Store the last detected value for variable velocity
         
         # Timing state for debounce and throttle
@@ -286,6 +287,28 @@ class Trigger:
             
             # Update previous ROI for next frame
             self.previous_roi = current_roi.copy()
+            
+            self.detected_value = avg_diff
+            return avg_diff >= self.threshold
+        
+        if self.trigger_type == 'difference':
+            # Calculate average difference between current and first frame IN THE ROI ONLY
+            # Extract only the ROI portion of the frame for difference detection
+            if gray_frame is not None:
+                current_roi = gray_frame[y:y+h, x:x+w]  # Slice ROI from full frame
+            else:
+                roi = frame[y:y+h, x:x+w]  # Slice ROI from full frame
+                current_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            
+            # If no first frame, store current ROI and return False
+            if self.first_roi is None:
+                self.first_roi = current_roi.copy()
+                self.detected_value = 0.0
+                return False
+            
+            # Calculate average absolute difference within the ROI only
+            diff = cv2.absdiff(current_roi, self.first_roi)
+            avg_diff = float(np.mean(diff))
             
             self.detected_value = avg_diff
             return avg_diff >= self.threshold
@@ -572,14 +595,24 @@ class VideoMIDITrigger:
             # Reset motion detection state
             if trigger.trigger_type == 'motion':
                 trigger.previous_roi = None
+            # Reset difference detection state
+            if trigger.trigger_type == 'difference':
+                trigger.first_roi = None
             # Reset timing state for debounce and throttle
             trigger.became_invalid_time = None
             trigger.last_deactivated_time = None
     
+    def reset_first_frame(self):
+        """Reset the first frame for difference triggers."""
+        for trigger in self.triggers:
+            if trigger.trigger_type == 'difference':
+                trigger.first_roi = None
+        print("First frame reset for difference triggers")
+    
     def run(self):
         """Main loop to play video and process triggers."""
         print("\nStarting video playback...")
-        print("Press 'q' to quit, 'r' to restart video\n")
+        print("Press 'q' to quit, 'r' to reset first frame for difference triggers\n")
         
         # Calculate delay between frames (in milliseconds)
         delay = int(1000 / self.fps) if self.fps > 0 else 1
@@ -613,9 +646,7 @@ class VideoMIDITrigger:
                 if key == ord('q'):
                     break
                 elif key == ord('r'):
-                    print("Restarting video...")
-                    self.reset_triggers()
-                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    self.reset_first_frame()
         
         finally:
             self.cleanup()

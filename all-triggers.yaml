@@ -48,6 +48,20 @@ triggers:
       velocity: 100
       channel: 0
   
+  # Difference trigger - activates when area differs from first frame
+  - name: "Difference"
+    position:
+      x: 42.5
+      y: 75
+      width: 15
+      height: 15
+    type: "difference"
+    threshold: 15  # Average pixel difference from first frame
+    midi:
+      note: 65  # F
+      velocity: 100
+      channel: 0
+  
   # Range trigger - sends CC values based on brightness
   - name: "Range"
     position:
