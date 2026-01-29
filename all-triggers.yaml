@@ -75,3 +75,17 @@ triggers:
     midi:
       cc: 20
       channel: 0
+  
+  # Difference Range trigger - sends CC values based on difference from first frame
+  - name: "Difference Range"
+    position:
+      x: 75
+      y: 75
+      width: 10
+      height: 20
+    type: "difference range"
+    min: 0    # Minimum difference value
+    max: 50   # Maximum difference value
+    midi:
+      cc: 21
+      channel: 0

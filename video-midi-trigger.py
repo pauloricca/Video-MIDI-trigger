@@ -126,7 +126,7 @@ class Trigger:
                 raise ValueError(f"Missing 'threshold' for trigger '{self.name}'")
             if not (0 <= self.threshold <= 255):
                 raise ValueError(f"Threshold must be between 0 and 255 for trigger '{self.name}'")
-        elif self.trigger_type == 'range':
+        elif self.trigger_type in ('range', 'difference range'):
             if self.range_min is None or self.range_max is None:
                 raise ValueError(f"Missing 'min'/'max' for trigger '{self.name}'")
             if not (0 <= self.range_min <= 255) or not (0 <= self.range_max <= 255):
@@ -191,7 +191,7 @@ class Trigger:
                     raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity_config} for trigger '{self.name}'")
                 self.velocity_mode = 'fixed'
                 self.velocity_fixed = velocity_config
-        elif self.trigger_type == 'range':
+        elif self.trigger_type in ('range', 'difference range'):
             cc = self.midi_config.get('cc')
             if cc is None:
                 raise ValueError(f"Missing MIDI CC for trigger '{self.name}'")
@@ -218,6 +218,14 @@ class Trigger:
             roi = frame[y:y+h, x:x+w]
             gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         return float(np.mean(gray_roi))
+    
+    def _extract_roi_grayscale(self, frame, gray_frame, x, y, w, h):
+        """Extract and return the grayscale ROI from the frame."""
+        if gray_frame is not None:
+            return gray_frame[y:y+h, x:x+w]
+        else:
+            roi = frame[y:y+h, x:x+w]
+            return cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     
     def setup_roi(self, frame_height, frame_width):
         """Calculate the region of interest coordinates based on frame size."""
@@ -268,12 +276,7 @@ class Trigger:
         
         if self.trigger_type == 'motion':
             # Calculate average difference between current and previous frame IN THE ROI ONLY
-            # Extract only the ROI portion of the frame for motion detection
-            if gray_frame is not None:
-                current_roi = gray_frame[y:y+h, x:x+w]  # Slice ROI from full frame
-            else:
-                roi = frame[y:y+h, x:x+w]  # Slice ROI from full frame
-                current_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            current_roi = self._extract_roi_grayscale(frame, gray_frame, x, y, w, h)
             
             # If no previous frame, store current ROI and return False
             if self.previous_roi is None:
@@ -293,12 +296,7 @@ class Trigger:
         
         if self.trigger_type == 'difference':
             # Calculate average difference between current and first frame IN THE ROI ONLY
-            # Extract only the ROI portion of the frame for difference detection
-            if gray_frame is not None:
-                current_roi = gray_frame[y:y+h, x:x+w]  # Slice ROI from full frame
-            else:
-                roi = frame[y:y+h, x:x+w]  # Slice ROI from full frame
-                current_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            current_roi = self._extract_roi_grayscale(frame, gray_frame, x, y, w, h)
             
             # If no first frame, store current ROI and return False
             if self.first_roi is None:
@@ -318,6 +316,31 @@ class Trigger:
             low = min(self.range_min, self.range_max)
             high = max(self.range_min, self.range_max)
             clipped = min(max(avg_brightness, low), high)
+            if self.range_min == self.range_max:
+                self.range_level = 0.0
+            else:
+                self.range_level = (clipped - self.range_min) / (self.range_max - self.range_min)
+            value = int(round(self.range_level * 127))
+            return value
+        
+        if self.trigger_type == 'difference range':
+            # Calculate average difference between current and first frame, then map to CC
+            current_roi = self._extract_roi_grayscale(frame, gray_frame, x, y, w, h)
+            
+            # If no first frame, store current ROI and return 0
+            if self.first_roi is None:
+                self.first_roi = current_roi.copy()
+                self.range_level = 0.0
+                return 0
+            
+            # Calculate average absolute difference within the ROI only
+            diff = cv2.absdiff(current_roi, self.first_roi)
+            avg_diff = float(np.mean(diff))
+            
+            # Map the difference to the range
+            low = min(self.range_min, self.range_max)
+            high = max(self.range_min, self.range_max)
+            clipped = min(max(avg_diff, low), high)
             if self.range_min == self.range_max:
                 self.range_level = 0.0
             else:
@@ -527,7 +550,7 @@ class VideoMIDITrigger:
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         for trigger in self.triggers:
-            if trigger.trigger_type == 'range':
+            if trigger.trigger_type in ('range', 'difference range'):
                 value = trigger.check_trigger(frame, gray_frame=gray_frame)
                 if value != trigger.last_cc_value:
                     trigger.last_cc_value = value
@@ -596,7 +619,7 @@ class VideoMIDITrigger:
             if trigger.trigger_type == 'motion':
                 trigger.previous_roi = None
             # Reset difference detection state
-            if trigger.trigger_type == 'difference':
+            if trigger.trigger_type in ('difference', 'difference range'):
                 trigger.first_roi = None
             # Reset timing state for debounce and throttle
             trigger.became_invalid_time = None
@@ -604,15 +627,20 @@ class VideoMIDITrigger:
     
     def reset_first_frame(self):
         """Reset the first frame for difference triggers."""
+        count = 0
         for trigger in self.triggers:
-            if trigger.trigger_type == 'difference':
+            if trigger.trigger_type in ('difference', 'difference range'):
                 trigger.first_roi = None
-        print("First frame reset for difference triggers")
+                count += 1
+        if count > 0:
+            print(f"First frame reset for {count} difference trigger(s)")
+        else:
+            print("No difference triggers to reset")
     
     def run(self):
         """Main loop to play video and process triggers."""
         print("\nStarting video playback...")
-        print("Press 'q' to quit, 'r' to reset first frame for difference triggers\n")
+        print("Press 'q' to quit, 'r' to restart video/reset first frame\n")
         
         # Calculate delay between frames (in milliseconds)
         delay = int(1000 / self.fps) if self.fps > 0 else 1
@@ -646,7 +674,10 @@ class VideoMIDITrigger:
                 if key == ord('q'):
                     break
                 elif key == ord('r'):
+                    print("Restarting video and resetting first frame...")
+                    self.reset_triggers()
                     self.reset_first_frame()
+                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         
         finally:
             self.cleanup()
