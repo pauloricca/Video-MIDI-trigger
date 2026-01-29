@@ -319,7 +319,7 @@ class Trigger:
             current_roi = self._extract_roi_grayscale(frame, gray_frame, x, y, w, h)
             
             # If no first frame, store current ROI and return False
-            if self.first_roi is None:
+            if self.first_roi is None or self.first_roi.shape != current_roi.shape:
                 self.first_roi = current_roi.copy()
                 self.detected_value = 0.0
                 return False
@@ -348,7 +348,7 @@ class Trigger:
             current_roi = self._extract_roi_grayscale(frame, gray_frame, x, y, w, h)
             
             # If no first frame, store current ROI and return 0
-            if self.first_roi is None:
+            if self.first_roi is None or self.first_roi.shape != current_roi.shape:
                 self.first_roi = current_roi.copy()
                 self.range_level = 0.0
                 return 0
