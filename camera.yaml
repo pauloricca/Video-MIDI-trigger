@@ -1,57 +1,110 @@
-# source: camera
-source: video2.mp4
-# device: "IAC Driver Bus 1"
-device: "S-1 MIDI IN"
+source: camera
+# source: video2.mp4
+device: "IAC Driver Bus 1"
+# device: "H4MIDI-WC Port 1"
+# device: "S-1 MIDI IN"
 
 triggers:
-  - name: "A"
+  
+  - name: "1"
     position:
-      x: 80
-      y: 10
-      width: 10
-      height: 10
-    type: "brightness"
-    threshold: 100
+      x: 10
+      y: 15
+      width: 15
+      height: 15
+    type: "motion"
+    threshold: 10  # Average pixel difference
+    debounce: 0.2
+    throttle: 0.5
     midi:
-      note: 64  # Middle C
-      velocity: 100
+      note: 1  # E
+      velocity:
+        min: [10, 80]
+        max: [20, 127]
       channel: 0
   
-  - name: "B"
+  - name: "2"
     position:
-      x: 80
+      x: 10
       y: 40
-      width: 10
-      height: 10
-    type: "brightness"
-    threshold: 120
+      width: 15
+      height: 15
+    type: "motion"
+    threshold: 10  # Average pixel difference
+    debounce: 0.2
+    throttle: 0.5
     midi:
-      note: 62  # D
-      velocity: 100
-      channel: 0
+      note: 1  # E
+      velocity:
+        min: [10, 80]
+        max: [20, 127]
+      channel: 1
   
-  - name: "C"
-    position:
-      x: 80
-      y: 70
-      width: 10
-      height: 10
-    type: "brightness"
-    threshold: 120
-    midi:
-      note: 60  # E
-      velocity: 100
-      channel: 0
-
-  - name: "Range Trigger"
+  - name: "3"
     position:
       x: 10
       y: 70
-      width: 10
-      height: 30
-    type: "range"
-    min: 180
-    max: 100
+      width: 15
+      height: 15
+    type: "motion"
+    threshold: 10  # Average pixel difference
+    debounce: 0.2
+    throttle: 0.5
     midi:
-      cc: 25
-      channel: 0
+      note: 1  # E
+      velocity:
+        min: [10, 80]
+        max: [20, 127]
+      channel: 2
+  
+  - name: "4"
+    position:
+      x: 75
+      y: 15
+      width: 15
+      height: 15
+    type: "motion"
+    threshold: 10  # Average pixel difference
+    debounce: 0.2
+    throttle: 0.5
+    midi:
+      note: 1  # E
+      velocity:
+        min: [10, 80]
+        max: [20, 127]
+      channel: 3
+  
+  - name: "5"
+    position:
+      x: 75
+      y: 40
+      width: 15
+      height: 15
+    type: "motion"
+    threshold: 10  # Average pixel difference
+    debounce: 0.2
+    throttle: 0.5
+    midi:
+      note: 1  # E
+      velocity:
+        min: [10, 80]
+        max: [20, 127]
+      channel: 4
+  
+  - name: "6"
+    position:
+      x: 75
+      y: 70
+      width: 15
+      height: 15
+    type: "motion"
+    threshold: 10  # Average pixel difference
+    debounce: 0.2
+    throttle: 0.5
+    midi:
+      note: 1  # E
+      velocity:
+        min: [10, 80]
+        max: [20, 127]
+      channel: 5
+  

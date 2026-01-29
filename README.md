@@ -42,6 +42,7 @@ Create a YAML configuration file (e.g., `road.yaml`) with the following structur
 
 ```yaml
 source: "path/to/your/video.mp4"
+device: "IAC Driver Bus 1"  # Optional global default MIDI device
 
 # Optional: Global defaults for all triggers
 debounce: 0.5  # Wait 0.5s before deactivating (prevents flickering)
@@ -58,6 +59,7 @@ triggers:
     threshold: 200   # Brightness threshold (0-255)
     debounce: 0.3    # Optional: Override global debounce for this trigger
     throttle: 2.0    # Optional: Override global throttle for this trigger
+    device: "S-1 MIDI IN"  # Optional: Override MIDI device for this trigger
     midi:
       note: 60       # MIDI note number (0-127)
       velocity: 100  # Fixed velocity (0-127)
@@ -86,9 +88,10 @@ triggers:
   - **width**: Camera capture width (default 640)
   - **height**: Camera capture height (default 480)
   - **fps**: Target camera FPS (default 30)
+- **device** (optional): Global default MIDI output device name. Used when a trigger does not specify its own device.
 - **debounce** (optional): Global default debounce time in seconds (default 0). Prevents triggers from deactivating too quickly.
 - **throttle** (optional): Global default throttle time in seconds (default 0). Prevents triggers from reactivating too quickly.
-- **Live reload**: The app watches the YAML file and reloads trigger values on change. Changing `device` or `source` requires a restart to take effect.
+- **Live reload**: The app watches the YAML file and reloads trigger values on change. Changing the global `device` or `source` requires a restart to take effect.
 - **triggers**: List of trigger definitions
   - **name**: Descriptive name for the trigger
   - **position**: Location and size of the trigger area
@@ -99,6 +102,7 @@ triggers:
   - **min/max**: Brightness range (0-255) used to map CC values (range)
   - **debounce** (optional): Per-trigger debounce time in seconds. When a trigger becomes invalid, it will wait this duration before sending Note OFF. Overrides global default.
   - **throttle** (optional): Per-trigger throttle time in seconds. After deactivation, the trigger will wait this duration before it can reactivate. Overrides global default.
+  - **device** (optional): Per-trigger MIDI output device name. Overrides the global `device` for this trigger.
   - **midi**: MIDI message configuration
     - **note**: MIDI note number (0-127) for brightness/darkness/motion
     - **velocity**: Note velocity for brightness/darkness/motion. Can be:
