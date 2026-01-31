@@ -1,0 +1,33 @@
+source: building.mp4
+evice: "IAC Driver Bus 1"
+# device: "H4MIDI-WC Port 1"
+# device: "S-1 MIDI IN"
+
+triggers:
+  
+  - name: "1"
+    position:
+      x: 34.3
+      y: 27
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 50 
+    midi:
+      note: C3
+      velocity: 127
+      channel: 0
+  
+  - name: "2"
+    position:
+      x: 56.3
+      y: 27
+      width: 15
+      height: 10
+    type: "brightness"
+    threshold: 50 
+    midi:
+      note: C2
+      velocity: 127
+      channel: 0
+  

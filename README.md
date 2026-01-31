@@ -109,11 +109,13 @@ triggers:
 
 ### Configuration Parameters
 
-- **source**: Path to the video file (relative or absolute) or `"camera"` to use the webcam
+- **source**: Path to the video file (relative or absolute), `"camera"` to use the first available camera, or a camera name printed at startup (e.g. `FaceTime HD Camera`)
 - **camera** (optional): Settings applied when `source: "camera"`
   - **width**: Camera capture width (default 640)
   - **height**: Camera capture height (default 480)
   - **fps**: Target camera FPS (default 30)
+- **mirror** (optional): Mirror the camera image horizontally (default false). Only applies when using a camera source.
+- **scale** (optional): Scale the source frame by a ratio (default 1.0). Applies to camera or video sources.
 - **device** (optional): Global default MIDI output device name. Used when a trigger does not specify its own device.
 - **debounce** (optional): Global default debounce time in seconds (default 0). Prevents triggers from deactivating too quickly.
 - **throttle** (optional): Global default throttle time in seconds (default 0). Prevents triggers from reactivating too quickly.
@@ -136,7 +138,7 @@ triggers:
   - **throttle** (optional): Per-trigger throttle time in seconds. After deactivation, the trigger will wait this duration before it can reactivate. Overrides global default.
   - **device** (optional): Per-trigger MIDI output device name. Overrides the global `device` for this trigger.
   - **midi**: MIDI message configuration
-    - **note**: MIDI note number (0-127) for brightness/darkness/motion/difference
+    - **note**: MIDI note number (0-127) or note name for brightness/darkness/motion/difference (e.g. `C`, `D#4`, `Eb2`). If no octave is provided, octave 4 is assumed (so `C` = middle C = 60).
     - **velocity**: Note velocity for brightness/darkness/motion/difference. Can be:
       - **Fixed velocity**: A number between 0-127 (e.g., `velocity: 100`)
       - **Variable velocity**: A dict with min/max mappings based on detected value:

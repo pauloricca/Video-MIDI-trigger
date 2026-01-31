@@ -11,7 +11,46 @@ import numpy as np
 import rtmidi
 import os
 import time
+import json
+import subprocess
 from pathlib import Path
+import re
+
+
+NOTE_NAME_RE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d+)?$")
+
+
+def parse_midi_note(note_value, default_octave=4):
+    if isinstance(note_value, str):
+        note_str = note_value.strip()
+        if not note_str:
+            raise ValueError("MIDI note must not be empty")
+        if note_str.lstrip("+-").isdigit():
+            return int(note_str)
+        match = NOTE_NAME_RE.match(note_str)
+        if not match:
+            raise ValueError(
+                f"Invalid MIDI note '{note_value}'. Use a number (0-127) or note name like C, D#, Eb, F2."
+            )
+        letter, accidental, octave_text = match.groups()
+        octave = default_octave if octave_text is None else int(octave_text)
+        semitone_map = {
+            "C": 0,
+            "D": 2,
+            "E": 4,
+            "F": 5,
+            "G": 7,
+            "A": 9,
+            "B": 11,
+        }
+        semitone = semitone_map[letter.upper()]
+        if accidental == "#":
+            semitone += 1
+        elif accidental == "b":
+            semitone -= 1
+        midi_note = (octave + 1) * 12 + semitone
+        return midi_note
+    return note_value
 
 
 class MIDIController:
@@ -164,6 +203,10 @@ class Trigger:
             velocity_config = self.midi_config.get('velocity', 100)
             if note is None:
                 raise ValueError(f"Missing MIDI note for trigger '{self.name}'")
+            note = parse_midi_note(note)
+            self.midi_config['note'] = note
+            if not isinstance(note, (int, float)):
+                raise ValueError(f"MIDI note must be numeric, got {type(note)} for trigger '{self.name}'")
             if not (0 <= note <= 127):
                 raise ValueError(f"MIDI note must be between 0 and 127, got {note} for trigger '{self.name}'")
             
@@ -452,6 +495,11 @@ class VideoMIDITrigger:
         self.target_fps = None
         self.use_camera = False
         self.video_path = None
+        self.camera_name = None
+        self.camera_index = None
+        self.available_cameras = []
+        self.mirror = False
+        self.scale = 1.0
         
         self._load_config()
         
@@ -469,7 +517,10 @@ class VideoMIDITrigger:
             trigger.setup_roi(self.frame_height, self.frame_width)
         
         if self.use_camera:
-            print("Video: camera")
+            if self.camera_name:
+                print(f"Video: {self.camera_name}")
+            else:
+                print("Video: camera")
         else:
             print(f"Video: {self.video_path}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
@@ -482,9 +533,28 @@ class VideoMIDITrigger:
         self.config_mtime = self.config_path.stat().st_mtime
         
         source = self.config['source']
-        self.use_camera = isinstance(source, str) and source.lower() == "camera"
-        self.video_path = source
-        if not self.use_camera and not os.path.exists(self.video_path):
+        self.use_camera = False
+        self.camera_name = None
+        self.camera_index = None
+        self.video_path = None
+        self.mirror = bool(self.config.get('mirror', False))
+        self.scale = float(self.config.get('scale', 1.0))
+        if self.scale <= 0:
+            raise ValueError(f"Scale must be > 0, got {self.scale}")
+
+        if isinstance(source, str):
+            if source.lower() == "camera":
+                self.use_camera = True
+            elif os.path.exists(source):
+                self.video_path = source
+            else:
+                # Treat unknown string source as a camera name.
+                self.use_camera = True
+                self.camera_name = source
+        else:
+            self.video_path = source
+
+        if not self.use_camera and self.video_path and not os.path.exists(self.video_path):
             raise FileNotFoundError(f"Video file not found: {self.video_path}")
         
         # Extract global defaults for triggers
@@ -502,7 +572,15 @@ class VideoMIDITrigger:
                 self.midi_manager.get_controller(trigger.device_name)
 
     def _init_capture(self):
-        self.cap = cv2.VideoCapture(0 if self.use_camera else self.video_path)
+        if self.use_camera:
+            self.available_cameras = self._list_cameras()
+            self._print_cameras(self.available_cameras)
+            selected = self._resolve_camera(self.available_cameras, self.camera_name)
+            self.camera_index = selected["index"]
+            self.camera_name = selected["name"]
+            self.cap = cv2.VideoCapture(self.camera_index)
+        else:
+            self.cap = cv2.VideoCapture(self.video_path)
         if not self.cap.isOpened():
             if self.use_camera:
                 raise RuntimeError("Could not open camera.")
@@ -527,6 +605,79 @@ class VideoMIDITrigger:
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         if self.use_camera and (not self.fps or self.fps <= 0) and self.target_fps:
             self.fps = self.target_fps
+        if self.scale != 1.0:
+            self.frame_width = max(1, int(round(self.frame_width * self.scale)))
+            self.frame_height = max(1, int(round(self.frame_height * self.scale)))
+
+    def _list_cameras(self, max_devices=10):
+        cameras = []
+        system_names = self._get_system_camera_names()
+        for index in range(max_devices):
+            cap = cv2.VideoCapture(index)
+            if not cap.isOpened():
+                cap.release()
+                continue
+            name = None
+            if system_names and index < len(system_names):
+                name = system_names[index]
+            if not name:
+                name = f"Camera {index}"
+            cameras.append({"index": index, "name": name})
+            cap.release()
+        return cameras
+
+    def _get_system_camera_names(self):
+        if sys.platform != "darwin":
+            return []
+        try:
+            result = subprocess.run(
+                ["system_profiler", "-json", "SPCameraDataType"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            data = json.loads(result.stdout)
+            camera_entries = data.get("SPCameraDataType", [])
+            names = []
+            for entry in camera_entries:
+                name = entry.get("_name")
+                if name:
+                    names.append(name)
+            return names
+        except Exception:
+            return []
+
+    def _print_cameras(self, cameras):
+        if cameras:
+            print("Video: Available cameras:")
+            for cam in cameras:
+                print(f"  [{cam['index']}] {cam['name']}")
+        else:
+            print("Video: No cameras found.")
+
+    def _resolve_camera(self, cameras, camera_name):
+        if not cameras:
+            raise RuntimeError("No cameras found.")
+        if not camera_name:
+            return cameras[0]
+        match = None
+        for cam in cameras:
+            if cam["name"] == camera_name:
+                match = cam
+                break
+        if match is None:
+            for cam in cameras:
+                if cam["name"].lower() == camera_name.lower():
+                    match = cam
+                    break
+        if match is None:
+            available_names = [cam["name"] for cam in cameras]
+            raise ValueError(
+                f"Camera '{camera_name}' not found. "
+                f"If this is a video file, check the path. "
+                f"Available cameras: {available_names}"
+            )
+        return match
 
     def _reload_if_changed(self):
         try:
@@ -689,8 +840,11 @@ class VideoMIDITrigger:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
 
-                if self.use_camera:
+                if self.use_camera and self.mirror:
                     frame = cv2.flip(frame, 1)
+                if self.scale != 1.0:
+                    interp = cv2.INTER_AREA if self.scale < 1.0 else cv2.INTER_LINEAR
+                    frame = cv2.resize(frame, (self.frame_width, self.frame_height), interpolation=interp)
                 
                 # Process triggers
                 self._reload_if_changed()
