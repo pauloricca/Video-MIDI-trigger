@@ -170,31 +170,36 @@ class Trigger:
     def __init__(self, config, global_defaults=None):
         self.name = config.get('name', 'Unnamed Trigger')
         
-        # Validate required configuration keys
-        required_keys = ['position', 'type', 'midi']
+        # Validate required configuration keys (position and shape are mutually exclusive)
+        required_keys = ['type', 'midi']
         for key in required_keys:
             if key not in config:
                 raise ValueError(f"Missing required configuration key '{key}' in trigger '{self.name}'")
         
-        self.position = config['position']
+        # Check that EITHER position OR shape is provided (mutually exclusive)
+        self.position = config.get('position')
+        self.shape = config.get('shape')
+        
+        if self.position is None and self.shape is None:
+            raise ValueError(f"Trigger '{self.name}' must have either 'position' or 'shape' defined")
+        if self.position is not None and self.shape is not None:
+            raise ValueError(f"Trigger '{self.name}' cannot have both 'position' and 'shape' - use one or the other")
 
         colour_value = config.get('colour', global_defaults.get('colour'))
         colour = parse_colour(colour_value) if colour_value is not None else self.DEFAULT_COLOUR
         self.active_color = colour
         self.inactive_color = tuple(int(round(c * 0.5)) for c in colour)
         
-        # Check if shape array is provided
-        self.shape = config.get('shape')
+        # Validate position percentages if position is used
+        if self.position is not None:
+            for key in ['x', 'y', 'width', 'height']:
+                if key not in self.position:
+                    raise ValueError(f"Missing '{key}' in position for trigger '{self.name}'")
+                value = self.position[key]
+                if not (0 <= value <= 100):
+                    raise ValueError(f"Position '{key}' must be between 0 and 100, got {value} for trigger '{self.name}'")
         
-        # Validate position percentages
-        for key in ['x', 'y', 'width', 'height']:
-            if key not in self.position:
-                raise ValueError(f"Missing '{key}' in position for trigger '{self.name}'")
-            value = self.position[key]
-            if not (0 <= value <= 100):
-                raise ValueError(f"Position '{key}' must be between 0 and 100, got {value} for trigger '{self.name}'")
-        
-        # Validate shape array if provided
+        # Validate shape array if shape is used
         if self.shape is not None:
             if not isinstance(self.shape, list):
                 raise ValueError(f"Shape must be a list of points for trigger '{self.name}'")
@@ -357,8 +362,8 @@ class Trigger:
             if 0 <= rx < w and 0 <= ry < h:
                 mask[ry, rx] = 1
             else:
-                # Point is outside ROI - warn user
-                print(f"Warning: Shape point for trigger '{self.name}' at ({px}, {py}) is outside ROI bounds. Shape mask will be empty.")
+                # Point is outside ROI - this shouldn't happen with proper bounding box calculation
+                print(f"Warning: Shape point for trigger '{self.name}' at ({px}, {py}) is outside calculated ROI bounds.")
         elif len(shape_pixels) == 2:
             # Line - use cv2.line to draw the line pixels
             p1, p2 = shape_pixels
@@ -376,7 +381,7 @@ class Trigger:
         # Convert to boolean and warn if mask is empty
         bool_mask = mask.astype(bool)
         if not np.any(bool_mask):
-            print(f"Warning: Shape mask for trigger '{self.name}' is empty. Check that shape points are within the position bounding box.")
+            print(f"Warning: Shape mask for trigger '{self.name}' is empty.")
         
         return bool_mask
     def _extract_roi_grayscale(self, frame, gray_frame, x, y, w, h):
@@ -389,34 +394,75 @@ class Trigger:
     
     def setup_roi(self, frame_height, frame_width):
         """Calculate the region of interest coordinates based on frame size."""
-        x_percent = self.position['x']
-        y_percent = self.position['y']
-        w_percent = self.position['width']
-        h_percent = self.position['height']
-        
-        # Convert percentages to pixel coordinates
-        x = int(frame_width * x_percent / 100)
-        y = int(frame_height * y_percent / 100)
-        w = int(frame_width * w_percent / 100)
-        h = int(frame_height * h_percent / 100)
-        
-        # Validate ROI bounds
-        if w <= 0 or h <= 0:
-            raise ValueError(f"Invalid ROI size for trigger '{self.name}': width={w}, height={h}")
-        
-        # Ensure ROI stays within frame boundaries
-        if x + w > frame_width:
-            w = frame_width - x
-        if y + h > frame_height:
-            h = frame_height - y
-        
-        if x < 0 or y < 0 or x >= frame_width or y >= frame_height:
-            raise ValueError(f"Invalid ROI position for trigger '{self.name}': x={x}, y={y}")
-        
-        self.roi_coords = (x, y, w, h)
-        
-        # Create shape mask if shape is defined
-        if self.shape is not None:
+        if self.position is not None:
+            # Use position to define rectangular ROI
+            x_percent = self.position['x']
+            y_percent = self.position['y']
+            w_percent = self.position['width']
+            h_percent = self.position['height']
+            
+            # Convert percentages to pixel coordinates
+            x = int(frame_width * x_percent / 100)
+            y = int(frame_height * y_percent / 100)
+            w = int(frame_width * w_percent / 100)
+            h = int(frame_height * h_percent / 100)
+            
+            # Validate ROI bounds
+            if w <= 0 or h <= 0:
+                raise ValueError(f"Invalid ROI size for trigger '{self.name}': width={w}, height={h}")
+            
+            # Ensure ROI stays within frame boundaries
+            if x + w > frame_width:
+                w = frame_width - x
+            if y + h > frame_height:
+                h = frame_height - y
+            
+            if x < 0 or y < 0 or x >= frame_width or y >= frame_height:
+                raise ValueError(f"Invalid ROI position for trigger '{self.name}': x={x}, y={y}")
+            
+            self.roi_coords = (x, y, w, h)
+            # No shape mask for position-based triggers
+            self.shape_mask = None
+            
+        else:
+            # Use shape to define ROI - calculate bounding box from shape points
+            # Convert shape points from percentages to pixel coordinates
+            shape_pixels = []
+            for point in self.shape:
+                px = int(frame_width * point[0] / 100)
+                py = int(frame_height * point[1] / 100)
+                shape_pixels.append((px, py))
+            
+            # Calculate bounding box from shape points
+            xs = [p[0] for p in shape_pixels]
+            ys = [p[1] for p in shape_pixels]
+            
+            # Add small padding for single points and lines to ensure they're visible
+            if len(shape_pixels) == 1:
+                # Single point - create a small box around it
+                x = max(0, xs[0] - 5)
+                y = max(0, ys[0] - 5)
+                w = min(11, frame_width - x)
+                h = min(11, frame_height - y)
+            elif len(shape_pixels) == 2:
+                # Line - use bounding box with small padding
+                x = max(0, min(xs) - 1)
+                y = max(0, min(ys) - 1)
+                max_x = min(frame_width - 1, max(xs) + 1)
+                max_y = min(frame_height - 1, max(ys) + 1)
+                w = max(1, max_x - x + 1)
+                h = max(1, max_y - y + 1)
+            else:
+                # Polygon - use exact bounding box
+                x = max(0, min(xs))
+                y = max(0, min(ys))
+                max_x = min(frame_width - 1, max(xs))
+                max_y = min(frame_height - 1, max(ys))
+                w = max(1, max_x - x + 1)
+                h = max(1, max_y - y + 1)
+            
+            self.roi_coords = (x, y, w, h)
+            # Create shape mask for shape-based triggers
             self.shape_mask = self._create_shape_mask(frame_height, frame_width)
     
     def check_trigger(self, frame, gray_frame=None):
