@@ -1,0 +1,20 @@
+source: "camera"
+
+camera:
+  width: 640
+  height: 480
+  fps: 30
+
+triggers:
+  - name: "Difference Range Trigger"
+    position:
+      x: 40
+      y: 40
+      width: 20
+      height: 20
+    type: "difference range"
+    min: 0     # Minimum difference value
+    max: 50    # Maximum difference value
+    midi:
+      cc: 20   # CC number
+      channel: 0
