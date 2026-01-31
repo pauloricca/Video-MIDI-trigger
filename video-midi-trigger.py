@@ -439,19 +439,27 @@ class Trigger:
             
             # Add small padding for single points and lines to ensure they're visible
             if len(shape_pixels) == 1:
-                # Single point - create a small box around it
-                x = max(0, xs[0] - 5)
-                y = max(0, ys[0] - 5)
-                w = min(11, frame_width - x)
-                h = min(11, frame_height - y)
+                # Single point - create a small box centered around it
+                center_x, center_y = xs[0], ys[0]
+                # 11x11 box centered on the point (5 pixels padding on each side)
+                x = max(0, center_x - 5)
+                y = max(0, center_y - 5)
+                # Calculate width/height accounting for clamping
+                right_edge = min(frame_width, center_x + 6)
+                bottom_edge = min(frame_height, center_y + 6)
+                w = right_edge - x
+                h = bottom_edge - y
             elif len(shape_pixels) == 2:
                 # Line - use bounding box with small padding
-                x = max(0, min(xs) - 1)
-                y = max(0, min(ys) - 1)
-                max_x = min(frame_width - 1, max(xs) + 1)
-                max_y = min(frame_height - 1, max(ys) + 1)
-                w = max(1, max_x - x + 1)
-                h = max(1, max_y - y + 1)
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
+                # Add 1 pixel padding
+                x = max(0, min_x - 1)
+                y = max(0, min_y - 1)
+                right_edge = min(frame_width, max_x + 2)
+                bottom_edge = min(frame_height, max_y + 2)
+                w = right_edge - x
+                h = bottom_edge - y
             else:
                 # Polygon - use exact bounding box
                 x = max(0, min(xs))
