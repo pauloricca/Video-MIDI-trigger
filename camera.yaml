@@ -12,10 +12,10 @@ triggers:
       y: 15
       width: 15
       height: 15
-    type: "motion"
+    type: "difference"
     threshold: 10  # Average pixel difference
-    debounce: 0.2
-    throttle: 0.5
+    debounce: 0.1
+    throttle: 0.2
     midi:
       note: 1  # E
       velocity:
@@ -29,10 +29,10 @@ triggers:
       y: 40
       width: 15
       height: 15
-    type: "motion"
+    type: "difference"
     threshold: 10  # Average pixel difference
-    debounce: 0.2
-    throttle: 0.5
+    debounce: 0.1
+    throttle: 0.2
     midi:
       note: 1  # E
       velocity:
@@ -46,10 +46,10 @@ triggers:
       y: 70
       width: 15
       height: 15
-    type: "motion"
+    type: "difference"
     threshold: 10  # Average pixel difference
-    debounce: 0.2
-    throttle: 0.5
+    debounce: 0.1
+    throttle: 0.2
     midi:
       note: 1  # E
       velocity:
@@ -63,10 +63,10 @@ triggers:
       y: 15
       width: 15
       height: 15
-    type: "motion"
+    type: "difference"
     threshold: 10  # Average pixel difference
-    debounce: 0.2
-    throttle: 0.5
+    debounce: 0.1
+    throttle: 0.2
     midi:
       note: 1  # E
       velocity:
@@ -80,10 +80,10 @@ triggers:
       y: 40
       width: 15
       height: 15
-    type: "motion"
+    type: "difference"
     threshold: 10  # Average pixel difference
-    debounce: 0.2
-    throttle: 0.5
+    debounce: 0.1
+    throttle: 0.2
     midi:
       note: 1  # E
       velocity:
@@ -97,10 +97,10 @@ triggers:
       y: 70
       width: 15
       height: 15
-    type: "motion"
+    type: "difference"
     threshold: 10  # Average pixel difference
-    debounce: 0.2
-    throttle: 0.5
+    debounce: 0.1
+    throttle: 0.2
     midi:
       note: 1  # E
       velocity:
@@ -108,3 +108,15 @@ triggers:
         max: [20, 127]
       channel: 5
   
+  - name: "Range Trigger"
+    position:
+      x: 10
+      y: 70
+      width: 10
+      height: 30
+    type: "range"
+    min: 0
+    max: 255
+    midi:
+      cc: 25
+      channel: 0

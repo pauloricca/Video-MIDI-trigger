@@ -96,16 +96,43 @@ triggers:
     midi:
       note: 64
       velocity: 110
+  
+  - name: "Difference Trigger"
+    position:
+      x: 50
+      y: 70
+      width: 10
+      height: 10
+    type: "difference"
+    threshold: 10
+    midi:
+      note: 64       # MIDI note number
+      velocity: 100
+      channel: 0
+  
+  - name: "Difference Range"
+    position:
+      x: 75
+      y: 75
+      width: 10
+      height: 20
+    type: "difference range"
+    min: 0     # Minimum difference value
+    max: 50    # Maximum difference value
+    midi:
+      cc: 21
       channel: 0
 ```
 
 ### Configuration Parameters
 
-- **source**: Path to the video file (relative or absolute) or `"camera"` to use the webcam
+- **source**: Path to the video file (relative or absolute), `"camera"` to use the first available camera, or a camera name printed at startup (e.g. `FaceTime HD Camera`)
 - **camera** (optional): Settings applied when `source: "camera"`
   - **width**: Camera capture width (default 640)
   - **height**: Camera capture height (default 480)
   - **fps**: Target camera FPS (default 30)
+- **mirror** (optional): Mirror the camera image horizontally (default false). Only applies when using a camera source.
+- **scale** (optional): Scale the source frame by a ratio (default 1.0). Applies to camera or video sources.
 - **device** (optional): Global default MIDI output device name. Used when a trigger does not specify its own device.
 - **debounce** (optional): Global default debounce time in seconds (default 0). Prevents triggers from deactivating too quickly.
 - **throttle** (optional): Global default throttle time in seconds (default 0). Prevents triggers from reactivating too quickly.
@@ -123,15 +150,21 @@ triggers:
     - **3+ points**: Polygon trigger (filled)
     - If omitted, the trigger area is a rectangle (backward compatible)
     - Example: `shape: [[25, 25], [20, 45], [50, 45]]` defines a triangle
-  - **type**: Supports "brightness", "darkness", "motion", and "range"
-  - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness), or average pixel difference (0-255) for motion detection
-  - **min/max**: Brightness range (0-255) used to map CC values (range)
+  - **type**: Supports "brightness", "darkness", "motion", "difference", "range", and "difference range"
+    - **brightness**: Triggers when the area becomes brighter than the threshold
+    - **darkness**: Triggers when the area becomes darker than the threshold
+    - **motion**: Triggers when the difference from the previous frame exceeds the threshold
+    - **difference**: Triggers when the difference from the first frame exceeds the threshold (reset with 'r' key)
+    - **range**: Maps brightness to a MIDI CC value
+    - **difference range**: Maps difference from first frame to a MIDI CC value (reset with 'r' key)
+  - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness), or average pixel difference (0-255) for motion/difference detection
+  - **min/max**: Brightness range (0-255) for range triggers, or difference range (0-255) for difference range triggers
   - **debounce** (optional): Per-trigger debounce time in seconds. When a trigger becomes invalid, it will wait this duration before sending Note OFF. Overrides global default.
   - **throttle** (optional): Per-trigger throttle time in seconds. After deactivation, the trigger will wait this duration before it can reactivate. Overrides global default.
   - **device** (optional): Per-trigger MIDI output device name. Overrides the global `device` for this trigger.
   - **midi**: MIDI message configuration
-    - **note**: MIDI note number (0-127) for brightness/darkness/motion
-    - **velocity**: Note velocity for brightness/darkness/motion. Can be:
+    - **note**: MIDI note number (0-127) or note name for brightness/darkness/motion/difference (e.g. `C`, `D#4`, `Eb2`). If no octave is provided, octave 4 is assumed (so `C` = middle C = 60).
+    - **velocity**: Note velocity for brightness/darkness/motion/difference. Can be:
       - **Fixed velocity**: A number between 0-127 (e.g., `velocity: 100`)
       - **Variable velocity**: A dict with min/max mappings based on detected value:
         ```yaml
@@ -141,7 +174,7 @@ triggers:
         ```
         The velocity will be interpolated between min and max based on the detected brightness/motion value.
         Values outside the range are clamped to min/max velocity.
-    - **cc**: MIDI CC number (0-127) for range
+    - **cc**: MIDI CC number (0-127) for range and difference range
     - **channel**: MIDI channel (0-15)
 
 ### Debounce and Throttle Behavior
@@ -260,7 +293,7 @@ This is particularly useful for:
 ## Controls
 
 - **q**: Quit the application
-- **r**: Restart the video from the beginning
+- **r**: Restart the video from the beginning (also resets the first frame for difference triggers)
 
 ## How it Works
 
@@ -268,9 +301,9 @@ This is particularly useful for:
 2. Opens the video file specified in the configuration
 3. For each frame:
    - Analyzes the brightness in each trigger area
-   - Detects motion by comparing frame differences
-   - Sends MIDI Note On/Off for brightness/darkness/motion triggers
-   - Sends MIDI CC values for range triggers (mapped from min/max)
+   - Detects motion by comparing frame differences (previous frame for "motion", first frame for "difference")
+   - Sends MIDI Note On/Off for brightness/darkness/motion/difference triggers
+   - Sends MIDI CC values for range triggers (mapped from brightness) and difference range triggers (mapped from first frame difference)
 4. Displays the video with visual overlays showing trigger areas:
    - Red rectangle: Inactive trigger
    - Green rectangle: Active trigger

@@ -1,0 +1,76 @@
+source: OBS Virtual Camera
+source: abbey-night-long.mp4
+scale: 0.25
+# https://www.earthcam.com/world/england/london/abbeyroad/?cam=abbeyroad_uk#google_vignette
+# source: video2.mp4
+device: "IAC Driver Bus 1"
+# device: "H4MIDI-WC Port 1"
+# device: "S-1 MIDI IN"
+
+triggers:
+  
+  - name: "1"
+    position:
+      x: 33.3
+      y: 23
+      width: 1
+      height: 2
+    type: "brightness"
+    threshold: 200  # Average pixel difference
+    midi:
+      note: C2
+      velocity: 127
+      channel: 0
+  
+  - name: "2"
+    position:
+      x: 40.6
+      y: 19
+      width: 1
+      height: 2
+    type: "brightness"
+    threshold: 200  # Average pixel difference
+    midi:
+      note: D2
+      velocity: 127
+      channel: 0
+  
+  - name: "3"
+    position:
+      x: 41.9
+      y: 21.5
+      width: 1
+      height: 2
+    type: "brightness"
+    threshold: 200  # Average pixel difference
+    midi:
+      note: E2
+      velocity: 127
+      channel: 0
+  
+  - name: "4"
+    position:
+      x: 50.7
+      y: 17.5
+      width: 1
+      height: 2
+    type: "brightness"
+    threshold: 200  # Average pixel difference
+    midi:
+      note: F2
+      velocity: 127
+      channel: 0
+  
+  - name: "5"
+    position:
+      x: 90.5
+      y: 23.5
+      width: 1
+      height: 2
+    type: "brightness"
+    threshold: 200  # Average pixel difference
+    midi:
+      note: G2
+      velocity: 127
+      channel: 0
+  
