@@ -114,6 +114,9 @@ class Trigger:
         
         self.position = config['position']
         
+        # Check if shape array is provided
+        self.shape = config.get('shape')
+        
         # Validate position percentages
         for key in ['x', 'y', 'width', 'height']:
             if key not in self.position:
@@ -121,6 +124,18 @@ class Trigger:
             value = self.position[key]
             if not (0 <= value <= 100):
                 raise ValueError(f"Position '{key}' must be between 0 and 100, got {value} for trigger '{self.name}'")
+        
+        # Validate shape array if provided
+        if self.shape is not None:
+            if not isinstance(self.shape, list):
+                raise ValueError(f"Shape must be a list of points for trigger '{self.name}'")
+            if len(self.shape) == 0:
+                raise ValueError(f"Shape must have at least one point for trigger '{self.name}'")
+            for i, point in enumerate(self.shape):
+                if not isinstance(point, (list, tuple)) or len(point) != 2:
+                    raise ValueError(f"Shape point {i} must be [x, y] for trigger '{self.name}'")
+                if not (0 <= point[0] <= 100) or not (0 <= point[1] <= 100):
+                    raise ValueError(f"Shape point {i} coordinates must be between 0 and 100 for trigger '{self.name}'")
         
         self.trigger_type = config['type']
         self.threshold = config.get('threshold')
@@ -222,6 +237,7 @@ class Trigger:
         self.last_cc_value = None
         self.range_level = 0.0
         self.roi_coords = None  # Will be set when frame size is known
+        self.shape_mask = None  # Will be set when frame size is known if shape is provided
         self.previous_roi = None  # For motion detection
         self.detected_value = 0.0  # Store the last detected value for variable velocity
         
@@ -236,7 +252,49 @@ class Trigger:
         else:
             roi = frame[y:y+h, x:x+w]
             gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        
+        # If shape mask exists, apply it to only calculate on shape pixels
+        if self.shape_mask is not None:
+            return float(np.mean(gray_roi[self.shape_mask]))
         return float(np.mean(gray_roi))
+    
+    def _create_shape_mask(self, frame_height, frame_width):
+        """Create a binary mask for the shape within the ROI."""
+        x, y, w, h = self.roi_coords
+        
+        # Convert shape points from percentages to pixel coordinates
+        shape_pixels = []
+        for point in self.shape:
+            px = int(frame_width * point[0] / 100)
+            py = int(frame_height * point[1] / 100)
+            shape_pixels.append((px, py))
+        
+        # Create empty mask (same size as ROI)
+        mask = np.zeros((h, w), dtype=np.uint8)
+        
+        if len(shape_pixels) == 1:
+            # Single pixel
+            px, py = shape_pixels[0]
+            # Convert to ROI-relative coordinates
+            rx, ry = px - x, py - y
+            if 0 <= rx < w and 0 <= ry < h:
+                mask[ry, rx] = 1
+        elif len(shape_pixels) == 2:
+            # Line - use cv2.line to draw the line pixels
+            p1, p2 = shape_pixels
+            # Convert to ROI-relative coordinates
+            p1_roi = (p1[0] - x, p1[1] - y)
+            p2_roi = (p2[0] - x, p2[1] - y)
+            cv2.line(mask, p1_roi, p2_roi, 1, 1)
+        else:
+            # Polygon (3+ points)
+            # Convert to ROI-relative coordinates
+            points_roi = np.array([[px - x, py - y] for px, py in shape_pixels], dtype=np.int32)
+            # Fill the polygon
+            cv2.fillPoly(mask, [points_roi], 1)
+        
+        # Return boolean mask
+        return mask.astype(bool)
     
     def setup_roi(self, frame_height, frame_width):
         """Calculate the region of interest coordinates based on frame size."""
@@ -265,6 +323,10 @@ class Trigger:
             raise ValueError(f"Invalid ROI position for trigger '{self.name}': x={x}, y={y}")
         
         self.roi_coords = (x, y, w, h)
+        
+        # Create shape mask if shape is defined
+        if self.shape is not None:
+            self.shape_mask = self._create_shape_mask(frame_height, frame_width)
     
     def check_trigger(self, frame, gray_frame=None):
         """Check if the trigger condition is met."""
@@ -302,7 +364,12 @@ class Trigger:
             
             # Calculate average absolute difference within the ROI only
             diff = cv2.absdiff(current_roi, self.previous_roi)
-            avg_diff = float(np.mean(diff))
+            
+            # Apply shape mask if it exists
+            if self.shape_mask is not None:
+                avg_diff = float(np.mean(diff[self.shape_mask]))
+            else:
+                avg_diff = float(np.mean(diff))
             
             # Update previous ROI for next frame
             self.previous_roi = current_roi.copy()
@@ -379,13 +446,39 @@ class Trigger:
                 cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
             color = (255, 255, 255)
         
-        # Draw rectangle
-        cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-        
-        # Draw label
-        label = f"{self.name}"
-        cv2.putText(frame, label, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 
-                    0.5, color, 1, cv2.LINE_AA)
+        # Draw shape if defined, otherwise draw rectangle
+        if self.shape is not None:
+            # Convert shape points from percentages to pixel coordinates
+            frame_height, frame_width = frame.shape[:2]
+            shape_pixels = []
+            for point in self.shape:
+                px = int(frame_width * point[0] / 100)
+                py = int(frame_height * point[1] / 100)
+                shape_pixels.append((px, py))
+            
+            if len(shape_pixels) == 1:
+                # Single pixel - draw a small circle
+                cv2.circle(frame, shape_pixels[0], 3, color, 2)
+            elif len(shape_pixels) == 2:
+                # Line
+                cv2.line(frame, shape_pixels[0], shape_pixels[1], color, 2)
+            else:
+                # Polygon (3+ points)
+                points = np.array(shape_pixels, dtype=np.int32)
+                cv2.polylines(frame, [points], isClosed=True, color=color, thickness=2)
+            
+            # Draw label near the first point of the shape
+            label_pos = (shape_pixels[0][0], shape_pixels[0][1] - 5)
+            cv2.putText(frame, self.name, label_pos, cv2.FONT_HERSHEY_SIMPLEX, 
+                        0.5, color, 1, cv2.LINE_AA)
+        else:
+            # Draw rectangle (original behavior)
+            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+            
+            # Draw label
+            label = f"{self.name}"
+            cv2.putText(frame, label, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 
+                        0.5, color, 1, cv2.LINE_AA)
 
 
 class VideoMIDITrigger:
