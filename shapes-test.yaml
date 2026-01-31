@@ -1,0 +1,71 @@
+source: "camera"
+
+camera:
+  width: 640
+  height: 480
+  fps: 30
+
+triggers:
+  # Single pixel trigger (1 point) - using shape only
+  - name: "Pixel"
+    shape:
+      - [25, 25]  # Single point
+    type: "brightness"
+    threshold: 200
+    midi:
+      note: 60  # C
+      velocity: 100
+      channel: 0
+  
+  # Line trigger (2 points) - using shape only
+  - name: "Line"
+    shape:
+      - [40, 15]  # Start point
+      - [60, 25]  # End point
+    type: "brightness"
+    threshold: 200
+    midi:
+      note: 62  # D
+      velocity: 100
+      channel: 0
+  
+  # Triangle trigger (3 points) - using shape only
+  - name: "Triangle"
+    shape:
+      - [25, 45]   # Top point
+      - [15, 65]   # Bottom left
+      - [35, 65]   # Bottom right
+    type: "motion"
+    threshold: 10
+    midi:
+      note: 64  # E
+      velocity: 100
+      channel: 0
+  
+  # Polygon trigger (4 points - diamond) - using shape only
+  - name: "Diamond"
+    shape:
+      - [65, 45]   # Top
+      - [75, 55]   # Right
+      - [65, 65]   # Bottom
+      - [55, 55]   # Left
+    type: "brightness"
+    threshold: 150
+    midi:
+      note: 65  # F
+      velocity: 100
+      channel: 0
+  
+  # Regular rectangle - using position only
+  - name: "Rectangle"
+    position:
+      x: 10
+      y: 75
+      width: 15
+      height: 15
+    type: "darkness"
+    threshold: 50
+    midi:
+      note: 67  # G
+      velocity: 100
+      channel: 0

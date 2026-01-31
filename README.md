@@ -80,6 +80,19 @@ triggers:
         max: [20, 127]  # High motion (20) -> high velocity (127)
       channel: 0
   
+  # Arbitrary shape trigger using a triangle (shape only - no position)
+  - name: "Triangle Area"
+    shape:           # Define arbitrary shape with points (x, y in percentage)
+      - [25, 25]     # Top vertex
+      - [20, 45]     # Bottom left vertex
+      - [50, 45]     # Bottom right vertex
+    type: "brightness"
+    threshold: 180
+    midi:
+      note: 64
+      velocity: 110
+      channel: 0
+  
   - name: "Difference Trigger"
     position:
       x: 50
@@ -122,9 +135,17 @@ triggers:
 - **Live reload**: The app watches the YAML file and reloads trigger values on change. Changing the global `device` or `source` requires a restart to take effect.
 - **triggers**: List of trigger definitions
   - **name**: Descriptive name for the trigger
-  - **position**: Location and size of the trigger area
-    - **x, y**: Position as percentage of frame dimensions (0-100)
-    - **width, height**: Size as percentage of frame dimensions (0-100)
+  - **position** OR **shape**: Define the trigger area (mutually exclusive - use one or the other)
+    - **position**: Rectangular trigger area (traditional method)
+      - **x, y**: Position as percentage of frame dimensions (0-100)
+      - **width, height**: Size as percentage of frame dimensions (0-100)
+    - **shape**: Arbitrary shape trigger (alternative to position)
+      - Array of points `[x, y]` in percentage coordinates (0-100)
+      - **1 point**: Single pixel trigger
+      - **2 points**: Line trigger
+      - **3+ points**: Polygon trigger (filled)
+      - Example: `shape: [[25, 25], [20, 45], [50, 45]]` defines a triangle
+      - The bounding box is automatically calculated from the shape points
   - **type**: Supports "brightness", "darkness", "motion", "difference", "range", and "difference range"
     - **brightness**: Triggers when the area becomes brighter than the threshold
     - **darkness**: Triggers when the area becomes darker than the threshold
@@ -174,6 +195,60 @@ MIDI:     ON         OFF              (blocked) ON
           |          |                          |
       Immediate  Waits 1s              Waits 2s from OFF
 ```
+
+### Arbitrary Shapes
+
+You can define **arbitrary shapes** as an alternative to rectangular trigger areas. Use `shape` instead of `position` to create custom trigger regions.
+
+**Shape Definition:**
+- Use `shape` instead of `position` (they are mutually exclusive)
+- Each point is defined as `[x, y]` in percentage coordinates (0-100)
+- The bounding box is automatically calculated from the shape points
+
+**Shape Types:**
+
+**Single Pixel (1 point):**
+```yaml
+shape: [[50, 50]]  # Trigger on a single pixel at center
+```
+
+**Line (2 points):**
+```yaml
+shape: [[10, 10], [90, 90]]  # Diagonal line trigger
+```
+
+**Polygon (3+ points):**
+```yaml
+shape: 
+  - [50, 20]   # Top point
+  - [20, 80]   # Bottom left
+  - [80, 80]   # Bottom right
+# Creates a filled triangle trigger area
+```
+
+**How it works:**
+- The shape is converted to a pixel mask
+- Only pixels inside the shape are analyzed for brightness/motion/difference
+- The bounding box is automatically calculated for efficient processing
+- Works with all trigger types (brightness, darkness, motion, difference, range)
+
+**Example Configuration:**
+```yaml
+- name: "Diamond Motion Detector"
+  shape:           # Use shape instead of position
+    - [50, 40]   # Top
+    - [60, 50]   # Right
+    - [50, 60]   # Bottom
+    - [40, 50]   # Left
+  type: "motion"
+  threshold: 15
+  midi:
+    note: 72
+    velocity: 100
+    channel: 0
+```
+
+**Note:** You cannot use both `position` and `shape` in the same trigger - use one or the other.
 
 ### Variable Velocity
 
