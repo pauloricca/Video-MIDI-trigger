@@ -19,6 +19,8 @@ import re
 
 NOTE_NAME_RE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d+)?$")
 
+PRINT_MIDI_SENDS = False
+
 
 def parse_midi_note(note_value, default_octave=4):
     if isinstance(note_value, str):
@@ -51,6 +53,30 @@ def parse_midi_note(note_value, default_octave=4):
         midi_note = (octave + 1) * 12 + semitone
         return midi_note
     return note_value
+
+
+def parse_colour(colour_value):
+    if colour_value is None:
+        return None
+    if isinstance(colour_value, str):
+        parts = [p.strip() for p in colour_value.split(",")]
+        if len(parts) != 3:
+            raise ValueError(
+                f"Colour must be RGB values like '255,255,255', got '{colour_value}'"
+            )
+        colour_value = parts
+    if isinstance(colour_value, (list, tuple)):
+        if len(colour_value) != 3:
+            raise ValueError(f"Colour must have 3 values, got {colour_value}")
+        try:
+            rgb = tuple(int(v) for v in colour_value)
+        except (TypeError, ValueError):
+            raise ValueError(f"Colour values must be integers, got {colour_value}")
+        for v in rgb:
+            if not (0 <= v <= 255):
+                raise ValueError(f"Colour values must be between 0 and 255, got {rgb}")
+        return rgb
+    raise ValueError(f"Colour must be a list, tuple, or 'r,g,b' string, got {type(colour_value)}")
 
 
 class MIDIController:
@@ -138,9 +164,8 @@ class MIDIManager:
 class Trigger:
     """Represents a visual trigger area and its MIDI mapping."""
     
-    # Color constants for visual feedback
-    ACTIVE_COLOR = (0, 255, 0)    # Green
-    INACTIVE_COLOR = (0, 0, 255)  # Red
+    # Default color for visual feedback
+    DEFAULT_COLOUR = (255, 255, 255)  # White
     
     def __init__(self, config, global_defaults=None):
         self.name = config.get('name', 'Unnamed Trigger')
@@ -152,6 +177,11 @@ class Trigger:
                 raise ValueError(f"Missing required configuration key '{key}' in trigger '{self.name}'")
         
         self.position = config['position']
+
+        colour_value = config.get('colour', global_defaults.get('colour'))
+        colour = parse_colour(colour_value) if colour_value is not None else self.DEFAULT_COLOUR
+        self.active_color = colour
+        self.inactive_color = tuple(int(round(c * 0.5)) for c in colour)
         
         # Validate position percentages
         for key in ['x', 'y', 'width', 'height']:
@@ -456,17 +486,17 @@ class Trigger:
         x, y, w, h = self.roi_coords
         
         # Choose color based on active state
-        color = self.ACTIVE_COLOR if self.active else self.INACTIVE_COLOR
+        color = self.active_color if self.active else self.inactive_color
 
         if self.trigger_type == 'range':
-            # Filled vertical bar (transparent blue)
+            # Filled vertical bar (transparent overlay)
             fill_h = int(h * self.range_level)
             if fill_h > 0:
                 overlay = frame.copy()
                 fill_y = y + (h - fill_h)
-                cv2.rectangle(overlay, (x, fill_y), (x + w, y + h), (255, 255, 255), -1)
+                cv2.rectangle(overlay, (x, fill_y), (x + w, y + h), self.active_color, -1)
                 cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
-            color = (255, 255, 255)
+            color = self.active_color if self.active else self.inactive_color
         
         # Draw rectangle
         cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
@@ -500,6 +530,8 @@ class VideoMIDITrigger:
         self.available_cameras = []
         self.mirror = False
         self.scale = 1.0
+        self.show_triggers = True
+        self.window_name = "Video-MIDI Trigger"
         
         self._load_config()
         
@@ -525,7 +557,6 @@ class VideoMIDITrigger:
             print(f"Video: {self.video_path}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
         print(f"FPS: {self.fps}")
-        print(f"Triggers: {len(self.triggers)}")
 
     def _load_config(self):
         with open(self.config_path, 'r') as f:
@@ -560,7 +591,8 @@ class VideoMIDITrigger:
         # Extract global defaults for triggers
         global_defaults = {
             'debounce': self.config.get('debounce', 0.0),
-            'throttle': self.config.get('throttle', 0.0)
+            'throttle': self.config.get('throttle', 0.0),
+            'colour': self.config.get('colour')
         }
         
         # Rebuild triggers
@@ -761,7 +793,8 @@ class VideoMIDITrigger:
                             channel = trigger.midi_config['channel']
                             midi = self.midi_manager.get_controller(trigger.device_name)
                             midi.send_note_on(note, velocity, channel)
-                            print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
+                            if PRINT_MIDI_SENDS:
+                                print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
                 
                 else:
                     # Trigger condition is not met
@@ -784,10 +817,12 @@ class VideoMIDITrigger:
                             channel = trigger.midi_config['channel']
                             midi = self.midi_manager.get_controller(trigger.device_name)
                             midi.send_note_off(note, channel)
-                            print(f"✗ {trigger.name}: Note OFF (Note: {note})")
+                            if PRINT_MIDI_SENDS:
+                                print(f"✗ {trigger.name}: Note OFF (Note: {note})")
             
             # Draw trigger area on frame
-            trigger.draw_on_frame(frame)
+            if self.show_triggers:
+                trigger.draw_on_frame(frame)
     
     def reset_triggers(self):
         """Reset all triggers and send MIDI Note Off messages."""
@@ -823,7 +858,10 @@ class VideoMIDITrigger:
     def run(self):
         """Main loop to play video and process triggers."""
         print("\nStarting video playback...")
-        print("Press 'q' to quit, 'r' to restart video/reset first frame\n")
+        print("Press 'q' to quit, 'r' to restart video/reset first frame, 'h' to hide/show triggers\n")
+
+        cv2.namedWindow(self.window_name, cv2.WINDOW_AUTOSIZE)
+        cv2.setMouseCallback(self.window_name, self._on_mouse)
         
         # Calculate delay between frames (in milliseconds)
         delay = int(1000 / self.fps) if self.fps > 0 else 1
@@ -851,7 +889,7 @@ class VideoMIDITrigger:
                 self.process_frame(frame)
                 
                 # Display frame
-                cv2.imshow('Video-MIDI Trigger', frame)
+                cv2.imshow(self.window_name, frame)
                 
                 # Handle keyboard input
                 elapsed_ms = (time.perf_counter() - loop_start) * 1000
@@ -864,6 +902,8 @@ class VideoMIDITrigger:
                     self.reset_triggers()
                     self.reset_first_frame()
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                elif key == ord('h'):
+                    self.show_triggers = not self.show_triggers
         
         finally:
             self.cleanup()
@@ -884,6 +924,15 @@ class VideoMIDITrigger:
         cv2.destroyAllWindows()
         self.midi_manager.close_all()
         print("Done.")
+
+    def _on_mouse(self, event, x, y, flags, param):
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        if self.frame_width <= 0 or self.frame_height <= 0:
+            return
+        x_pct = (x / self.frame_width) * 100
+        y_pct = (y / self.frame_height) * 100
+        print(f"Click: x={x_pct:.1f}%, y={y_pct:.1f}%")
 
 
 def main():

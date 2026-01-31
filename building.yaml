@@ -25,9 +25,35 @@ triggers:
       width: 15
       height: 10
     type: "brightness"
-    threshold: 50 
+    threshold: 70 
     midi:
-      note: C2
+      note: G2
+      velocity: 127
+      channel: 0
+  
+  - name: "3"
+    position:
+      x: 65.3
+      y: 33
+      width: 6
+      height: 2
+    type: "brightness"
+    threshold: 60
+    midi:
+      note: A3
+      velocity: 80
+      channel: 0
+  
+  - name: "4"
+    position:
+      x: 59.3
+      y: 28.9
+      width: 5
+      height: 3
+    type: "brightness"
+    threshold: 190 
+    midi:
+      note: D4
       velocity: 127
       channel: 0
   
