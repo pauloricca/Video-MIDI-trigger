@@ -255,6 +255,9 @@ class Trigger:
         
         # If shape mask exists, apply it to only calculate on shape pixels
         if self.shape_mask is not None:
+            # Check if mask has any pixels (avoid NaN from empty array)
+            if not np.any(self.shape_mask):
+                return 0.0  # Return 0 brightness if no valid pixels in mask
             return float(np.mean(gray_roi[self.shape_mask]))
         return float(np.mean(gray_roi))
     
@@ -279,6 +282,9 @@ class Trigger:
             rx, ry = px - x, py - y
             if 0 <= rx < w and 0 <= ry < h:
                 mask[ry, rx] = 1
+            else:
+                # Point is outside ROI - warn user
+                print(f"Warning: Shape point for trigger '{self.name}' at ({px}, {py}) is outside ROI bounds. Shape mask will be empty.")
         elif len(shape_pixels) == 2:
             # Line - use cv2.line to draw the line pixels
             p1, p2 = shape_pixels
@@ -293,8 +299,12 @@ class Trigger:
             # Fill the polygon
             cv2.fillPoly(mask, [points_roi], 1)
         
-        # Return boolean mask
-        return mask.astype(bool)
+        # Convert to boolean and warn if mask is empty
+        bool_mask = mask.astype(bool)
+        if not np.any(bool_mask):
+            print(f"Warning: Shape mask for trigger '{self.name}' is empty. Check that shape points are within the position bounding box.")
+        
+        return bool_mask
     
     def setup_roi(self, frame_height, frame_width):
         """Calculate the region of interest coordinates based on frame size."""
@@ -367,7 +377,11 @@ class Trigger:
             
             # Apply shape mask if it exists
             if self.shape_mask is not None:
-                avg_diff = float(np.mean(diff[self.shape_mask]))
+                # Check if mask has any pixels (avoid NaN from empty array)
+                if not np.any(self.shape_mask):
+                    avg_diff = 0.0  # Return 0 motion if no valid pixels in mask
+                else:
+                    avg_diff = float(np.mean(diff[self.shape_mask]))
             else:
                 avg_diff = float(np.mean(diff))
             

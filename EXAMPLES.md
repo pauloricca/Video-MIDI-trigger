@@ -111,9 +111,9 @@ To create a custom configuration:
 1. Copy `road.yaml` to a new file (e.g., `myconfig.yaml`)
 2. Update the `source` to point to your video file (or set it to `"camera"`)
 3. (Optional) Add a `camera` block to set width/height/fps when using the webcam
-3. Define your triggers with appropriate positions and thresholds
-4. (Optional) Add `shape` arrays to create arbitrary trigger shapes
-4. Run with: `python video-midi-trigger.py myconfig`
+4. Define your triggers with appropriate positions and thresholds
+5. (Optional) Add `shape` arrays to create arbitrary trigger shapes
+6. Run with: `python video-midi-trigger.py myconfig`
 
 ## Testing Without a Video File
 
