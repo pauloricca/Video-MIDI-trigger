@@ -80,15 +80,10 @@ triggers:
         max: [20, 127]  # High motion (20) -> high velocity (127)
       channel: 0
   
-  # Arbitrary shape trigger using a triangle
+  # Arbitrary shape trigger using a triangle (shape only - no position)
   - name: "Triangle Area"
-    position:
-      x: 20          # Bounding box for the shape
-      y: 20
-      width: 30
-      height: 30
-    shape:           # Optional: Define arbitrary shape with points
-      - [25, 25]     # Top vertex (x, y in percentage)
+    shape:           # Define arbitrary shape with points (x, y in percentage)
+      - [25, 25]     # Top vertex
       - [20, 45]     # Bottom left vertex
       - [50, 45]     # Bottom right vertex
     type: "brightness"
@@ -96,6 +91,7 @@ triggers:
     midi:
       note: 64
       velocity: 110
+      channel: 0
   
   - name: "Difference Trigger"
     position:
@@ -139,17 +135,17 @@ triggers:
 - **Live reload**: The app watches the YAML file and reloads trigger values on change. Changing the global `device` or `source` requires a restart to take effect.
 - **triggers**: List of trigger definitions
   - **name**: Descriptive name for the trigger
-  - **position**: Location and size of the trigger area
-    - **x, y**: Position as percentage of frame dimensions (0-100)
-    - **width, height**: Size as percentage of frame dimensions (0-100)
-    - Note: The position defines the bounding box for the trigger area
-  - **shape** (optional): Array of points defining an arbitrary shape within the position bounding box
-    - Each point is `[x, y]` in percentage coordinates (0-100)
-    - **1 point**: Single pixel trigger
-    - **2 points**: Line trigger
-    - **3+ points**: Polygon trigger (filled)
-    - If omitted, the trigger area is a rectangle (backward compatible)
-    - Example: `shape: [[25, 25], [20, 45], [50, 45]]` defines a triangle
+  - **position** OR **shape**: Define the trigger area (mutually exclusive - use one or the other)
+    - **position**: Rectangular trigger area (traditional method)
+      - **x, y**: Position as percentage of frame dimensions (0-100)
+      - **width, height**: Size as percentage of frame dimensions (0-100)
+    - **shape**: Arbitrary shape trigger (alternative to position)
+      - Array of points `[x, y]` in percentage coordinates (0-100)
+      - **1 point**: Single pixel trigger
+      - **2 points**: Line trigger
+      - **3+ points**: Polygon trigger (filled)
+      - Example: `shape: [[25, 25], [20, 45], [50, 45]]` defines a triangle
+      - The bounding box is automatically calculated from the shape points
   - **type**: Supports "brightness", "darkness", "motion", "difference", "range", and "difference range"
     - **brightness**: Triggers when the area becomes brighter than the threshold
     - **darkness**: Triggers when the area becomes darker than the threshold
@@ -202,12 +198,12 @@ MIDI:     ON         OFF              (blocked) ON
 
 ### Arbitrary Shapes
 
-In addition to rectangular trigger areas, you can define **arbitrary shapes** using an array of points. This allows for more precise trigger areas that match specific regions in your video.
+You can define **arbitrary shapes** as an alternative to rectangular trigger areas. Use `shape` instead of `position` to create custom trigger regions.
 
 **Shape Definition:**
-- Add a `shape` array to your trigger configuration
+- Use `shape` instead of `position` (they are mutually exclusive)
 - Each point is defined as `[x, y]` in percentage coordinates (0-100)
-- The `position` parameter still defines the bounding box that contains the shape
+- The bounding box is automatically calculated from the shape points
 
 **Shape Types:**
 
@@ -231,20 +227,15 @@ shape:
 ```
 
 **How it works:**
-- The shape is converted to a pixel mask within the bounding box
-- Only pixels inside the shape are analyzed for brightness/motion
-- More efficient than analyzing the entire rectangle
-- Works with all trigger types (brightness, darkness, motion, range)
+- The shape is converted to a pixel mask
+- Only pixels inside the shape are analyzed for brightness/motion/difference
+- The bounding box is automatically calculated for efficient processing
+- Works with all trigger types (brightness, darkness, motion, difference, range)
 
 **Example Configuration:**
 ```yaml
 - name: "Diamond Motion Detector"
-  position:
-    x: 40
-    y: 40
-    width: 20
-    height: 20
-  shape:
+  shape:           # Use shape instead of position
     - [50, 40]   # Top
     - [60, 50]   # Right
     - [50, 60]   # Bottom
@@ -256,6 +247,8 @@ shape:
     velocity: 100
     channel: 0
 ```
+
+**Note:** You cannot use both `position` and `shape` in the same trigger - use one or the other.
 
 ### Variable Velocity
 

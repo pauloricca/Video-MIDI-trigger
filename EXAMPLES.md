@@ -76,13 +76,15 @@ This is particularly useful for:
 
 ## shapes-test.yaml
 
-Demonstrates arbitrary shape triggers for more precise detection areas:
+Demonstrates arbitrary shape triggers as an alternative to rectangular position-based triggers:
 
 1. **Pixel Trigger** - Single point (1 point shape) for precise pixel monitoring
 2. **Line Trigger** - Line shape (2 points) for linear detection areas
 3. **Triangle Trigger** - Triangular motion detector (3 points)
 4. **Diamond Trigger** - Diamond-shaped brightness detector (4 points)
-5. **Rectangle Trigger** - Traditional rectangle for comparison (no shape)
+5. **Rectangle Trigger** - Traditional rectangle using position (for comparison)
+
+**Important:** Each trigger uses EITHER `position` (for rectangles) OR `shape` (for arbitrary shapes). You cannot use both.
 
 **Shape Format:**
 ```yaml
@@ -99,10 +101,11 @@ shape:
 - **3+ points**: Filled polygon trigger
 
 Shapes allow you to:
+- Use an alternative to rectangular `position` for defining trigger areas
 - Monitor specific geometric areas (triangles, diamonds, stars, etc.)
 - Create more efficient triggers by only analyzing relevant pixels
 - Match shapes in your video content more precisely
-- Combine with any trigger type (brightness, darkness, motion, range)
+- Works with any trigger type (brightness, darkness, motion, difference, range)
 
 ## Creating Your Own Configuration
 
@@ -111,9 +114,10 @@ To create a custom configuration:
 1. Copy `road.yaml` to a new file (e.g., `myconfig.yaml`)
 2. Update the `source` to point to your video file (or set it to `"camera"`)
 3. (Optional) Add a `camera` block to set width/height/fps when using the webcam
-4. Define your triggers with appropriate positions and thresholds
-5. (Optional) Add `shape` arrays to create arbitrary trigger shapes
-6. Run with: `python video-midi-trigger.py myconfig`
+4. Define your triggers using EITHER:
+   - `position` with x, y, width, height for rectangles
+   - `shape` with array of points for arbitrary shapes
+5. Run with: `python video-midi-trigger.py myconfig`
 
 ## Testing Without a Video File
 
