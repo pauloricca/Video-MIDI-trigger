@@ -74,6 +74,36 @@ This is particularly useful for:
 - **Brightness triggers**: Velocity matching light intensity
 - Creating more expressive and dynamic MIDI performances
 
+## shapes-test.yaml
+
+Demonstrates arbitrary shape triggers for more precise detection areas:
+
+1. **Pixel Trigger** - Single point (1 point shape) for precise pixel monitoring
+2. **Line Trigger** - Line shape (2 points) for linear detection areas
+3. **Triangle Trigger** - Triangular motion detector (3 points)
+4. **Diamond Trigger** - Diamond-shaped brightness detector (4 points)
+5. **Rectangle Trigger** - Traditional rectangle for comparison (no shape)
+
+**Shape Format:**
+```yaml
+shape:
+  - [x1, y1]  # First point (percentage coordinates)
+  - [x2, y2]  # Second point
+  - [x3, y3]  # Third point (for polygons)
+  # Add more points as needed
+```
+
+**Shape Types:**
+- **1 point**: Single pixel trigger
+- **2 points**: Line trigger
+- **3+ points**: Filled polygon trigger
+
+Shapes allow you to:
+- Monitor specific geometric areas (triangles, diamonds, stars, etc.)
+- Create more efficient triggers by only analyzing relevant pixels
+- Match shapes in your video content more precisely
+- Combine with any trigger type (brightness, darkness, motion, range)
+
 ## Creating Your Own Configuration
 
 To create a custom configuration:
@@ -82,6 +112,7 @@ To create a custom configuration:
 2. Update the `source` to point to your video file (or set it to `"camera"`)
 3. (Optional) Add a `camera` block to set width/height/fps when using the webcam
 3. Define your triggers with appropriate positions and thresholds
+4. (Optional) Add `shape` arrays to create arbitrary trigger shapes
 4. Run with: `python video-midi-trigger.py myconfig`
 
 ## Testing Without a Video File

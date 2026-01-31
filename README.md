@@ -79,6 +79,24 @@ triggers:
         min: [2, 80]    # Low motion (2) -> low velocity (80)
         max: [20, 127]  # High motion (20) -> high velocity (127)
       channel: 0
+  
+  # Arbitrary shape trigger using a triangle
+  - name: "Triangle Area"
+    position:
+      x: 20          # Bounding box for the shape
+      y: 20
+      width: 30
+      height: 30
+    shape:           # Optional: Define arbitrary shape with points
+      - [25, 25]     # Top vertex (x, y in percentage)
+      - [20, 45]     # Bottom left vertex
+      - [50, 45]     # Bottom right vertex
+    type: "brightness"
+    threshold: 180
+    midi:
+      note: 64
+      velocity: 110
+      channel: 0
 ```
 
 ### Configuration Parameters
@@ -97,6 +115,14 @@ triggers:
   - **position**: Location and size of the trigger area
     - **x, y**: Position as percentage of frame dimensions (0-100)
     - **width, height**: Size as percentage of frame dimensions (0-100)
+    - Note: The position defines the bounding box for the trigger area
+  - **shape** (optional): Array of points defining an arbitrary shape within the position bounding box
+    - Each point is `[x, y]` in percentage coordinates (0-100)
+    - **1 point**: Single pixel trigger
+    - **2 points**: Line trigger
+    - **3+ points**: Polygon trigger (filled)
+    - If omitted, the trigger area is a rectangle (backward compatible)
+    - Example: `shape: [[25, 25], [20, 45], [50, 45]]` defines a triangle
   - **type**: Supports "brightness", "darkness", "motion", and "range"
   - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness), or average pixel difference (0-255) for motion detection
   - **min/max**: Brightness range (0-255) used to map CC values (range)
@@ -139,6 +165,63 @@ MIDI:     ON         OFF              (blocked) ON
           ^          ^                          ^
           |          |                          |
       Immediate  Waits 1s              Waits 2s from OFF
+```
+
+### Arbitrary Shapes
+
+In addition to rectangular trigger areas, you can define **arbitrary shapes** using an array of points. This allows for more precise trigger areas that match specific regions in your video.
+
+**Shape Definition:**
+- Add a `shape` array to your trigger configuration
+- Each point is defined as `[x, y]` in percentage coordinates (0-100)
+- The `position` parameter still defines the bounding box that contains the shape
+
+**Shape Types:**
+
+**Single Pixel (1 point):**
+```yaml
+shape: [[50, 50]]  # Trigger on a single pixel at center
+```
+
+**Line (2 points):**
+```yaml
+shape: [[10, 10], [90, 90]]  # Diagonal line trigger
+```
+
+**Polygon (3+ points):**
+```yaml
+shape: 
+  - [50, 20]   # Top point
+  - [20, 80]   # Bottom left
+  - [80, 80]   # Bottom right
+# Creates a filled triangle trigger area
+```
+
+**How it works:**
+- The shape is converted to a pixel mask within the bounding box
+- Only pixels inside the shape are analyzed for brightness/motion
+- More efficient than analyzing the entire rectangle
+- Works with all trigger types (brightness, darkness, motion, range)
+
+**Example Configuration:**
+```yaml
+- name: "Diamond Motion Detector"
+  position:
+    x: 40
+    y: 40
+    width: 20
+    height: 20
+  shape:
+    - [50, 40]   # Top
+    - [60, 50]   # Right
+    - [50, 60]   # Bottom
+    - [40, 50]   # Left
+  type: "motion"
+  threshold: 15
+  midi:
+    note: 72
+    velocity: 100
+    channel: 0
 ```
 
 ### Variable Velocity
