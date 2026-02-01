@@ -15,6 +15,9 @@ import json
 import subprocess
 from pathlib import Path
 import re
+import copy
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedSeq
 
 
 NOTE_NAME_RE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d+)?$")
@@ -670,6 +673,9 @@ class Trigger:
 class VideoMIDITrigger:
     """Main application class."""
     
+    # Coordinate precision for trigger creation (decimal places)
+    COORDINATE_PRECISION = 1
+    
     def __init__(self, config_name):
         self.config_path = Path(config_name)
         if not self.config_path.suffix:
@@ -692,6 +698,11 @@ class VideoMIDITrigger:
         self.scale = 1.0
         self.show_triggers = True
         self.window_name = "Video-MIDI Trigger"
+        
+        # Creation mode state
+        self.creation_mode = False
+        self.new_trigger_config = None
+        self.new_trigger_points = []
         
         self._load_config()
         
@@ -983,6 +994,40 @@ class VideoMIDITrigger:
             # Draw trigger area on frame
             if self.show_triggers:
                 trigger.draw_on_frame(frame)
+        
+        # Draw creation mode visual feedback
+        if self.creation_mode and self.new_trigger_points:
+            self._draw_creation_overlay(frame)
+    
+    def _draw_creation_overlay(self, frame):
+        """Draw visual feedback for points being added in creation mode."""
+        if not self.new_trigger_points:
+            return
+        
+        # Convert percentage points to pixel coordinates
+        pixel_points = []
+        for point in self.new_trigger_points:
+            px = int(self.frame_width * point[0] / 100)
+            py = int(self.frame_height * point[1] / 100)
+            pixel_points.append((px, py))
+        
+        # Draw lines connecting the points
+        for i in range(len(pixel_points) - 1):
+            cv2.line(frame, pixel_points[i], pixel_points[i + 1], (0, 255, 255), 2)  # Yellow lines
+        
+        # If we have 3+ points, draw a line from last to first to show the closed shape
+        if len(pixel_points) >= 3:
+            cv2.line(frame, pixel_points[-1], pixel_points[0], (0, 255, 255), 1)  # Thinner line for closure
+        
+        # Draw circles at each point
+        for i, point in enumerate(pixel_points):
+            # Larger circle for the first point
+            if i == 0:
+                cv2.circle(frame, point, 8, (0, 255, 0), -1)  # Green filled circle
+                cv2.circle(frame, point, 8, (255, 255, 255), 2)  # White border
+            else:
+                cv2.circle(frame, point, 6, (0, 255, 255), -1)  # Yellow filled circle
+                cv2.circle(frame, point, 6, (255, 255, 255), 2)  # White border
     
     def reset_triggers(self):
         """Reset all triggers and send MIDI Note Off messages."""
@@ -1018,7 +1063,8 @@ class VideoMIDITrigger:
     def run(self):
         """Main loop to play video and process triggers."""
         print("\nStarting video playback...")
-        print("Press 'q' to quit, 'r' to restart video/reset first frame, 'h' to hide/show triggers\n")
+        print("Press 'q' to quit, 'r' to restart video/reset first frame, 'h' to hide/show triggers")
+        print("Press 'c' to enter creation mode (create new triggers by clicking)\n")
 
         cv2.namedWindow(self.window_name, cv2.WINDOW_AUTOSIZE)
         cv2.setMouseCallback(self.window_name, self._on_mouse)
@@ -1064,6 +1110,44 @@ class VideoMIDITrigger:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 elif key == ord('h'):
                     self.show_triggers = not self.show_triggers
+                elif key == ord('c'):
+                    # Enter creation mode
+                    self.creation_mode = True
+                    self.new_trigger_config = None
+                    self.new_trigger_points = []
+                    print("\n=== CREATION MODE ===")
+                    print("Click on the window to add points to the new trigger.")
+                    print("Press BACKSPACE to remove the last point.")
+                    print("Press ENTER to save and exit creation mode.")
+                    print("=====================\n")
+                elif key == 8 or key == 127:  # Backspace or Delete
+                    if self.creation_mode and self.new_trigger_config is not None and self.new_trigger_points:
+                        removed = self.new_trigger_points.pop()
+                        self.new_trigger_config['shape'].pop()
+                        print(f"Removed point: [{removed[0]}, {removed[1]}]. {len(self.new_trigger_points)} points remaining.")
+                elif key == 13 or key == 10:  # Enter or Return
+                    if self.creation_mode:
+                        if not self.new_trigger_points:
+                            # No points, discard the trigger
+                            print("No points added. Discarding trigger and exiting creation mode.")
+                        else:
+                            # Save the new trigger to config
+                            self.config['triggers'].append(self.new_trigger_config)
+                            print(f"Saved new trigger with {len(self.new_trigger_points)} points.")
+                            
+                            # Save to YAML file
+                            self._save_config()
+                            
+                            # Reload config to update triggers
+                            self._load_config()
+                            for trigger in self.triggers:
+                                trigger.setup_roi(self.frame_height, self.frame_width)
+                        
+                        # Exit creation mode
+                        self.creation_mode = False
+                        self.new_trigger_config = None
+                        self.new_trigger_points = []
+                        print("Exited creation mode.\n")
         
         finally:
             self.cleanup()
@@ -1085,6 +1169,44 @@ class VideoMIDITrigger:
         self.midi_manager.close_all()
         print("Done.")
 
+    def _save_config(self):
+        """Save config to YAML file, preserving comments."""
+        try:
+            # Use ruamel.yaml to preserve comments
+            yaml_loader = YAML()
+            yaml_loader.preserve_quotes = True
+            yaml_loader.default_flow_style = False
+            
+            # Read the current file
+            with open(self.config_path, 'r') as f:
+                data = yaml_loader.load(f)
+            
+            # Update triggers in the data
+            data['triggers'] = self.config['triggers']
+            
+            # Set flow style for shape coordinates to get [x, y] format instead of nested lists
+            for trigger in data['triggers']:
+                if 'shape' in trigger and trigger['shape']:
+                    for point in trigger['shape']:
+                        if isinstance(point, list):
+                            # Convert to flow style for compact representation
+                            if not isinstance(point, CommentedSeq):
+                                point_seq = CommentedSeq(point)
+                            else:
+                                point_seq = point
+                            point_seq.fa.set_flow_style()
+                            # Replace the point in the shape list
+                            idx = trigger['shape'].index(point)
+                            trigger['shape'][idx] = point_seq
+            
+            # Write back to file
+            with open(self.config_path, 'w') as f:
+                yaml_loader.dump(data, f)
+            
+            print(f"Configuration saved to {self.config_path}")
+        except Exception as e:
+            print(f"Error saving configuration: {e}")
+
     def _on_mouse(self, event, x, y, flags, param):
         if event != cv2.EVENT_LBUTTONDOWN:
             return
@@ -1092,7 +1214,35 @@ class VideoMIDITrigger:
             return
         x_pct = (x / self.frame_width) * 100
         y_pct = (y / self.frame_height) * 100
-        print(f"Click: x={x_pct:.1f}%, y={y_pct:.1f}%")
+        
+        if not self.creation_mode:
+            print(f"Click: x={x_pct:.1f}%, y={y_pct:.1f}%")
+        else:
+            # In creation mode: handle point addition
+            if self.new_trigger_config is None:
+                # First click in creation mode - duplicate last trigger
+                if not self.config['triggers']:
+                    print("No triggers to duplicate. Please create a trigger first.")
+                    self.creation_mode = False
+                    return
+                
+                # Duplicate the last trigger
+                last_trigger = self.config['triggers'][-1]
+                self.new_trigger_config = copy.deepcopy(last_trigger)
+                
+                # Remove position if it exists, initialize shape
+                if 'position' in self.new_trigger_config:
+                    del self.new_trigger_config['position']
+                self.new_trigger_config['shape'] = []
+                self.new_trigger_points = []
+                
+                print(f"Creating new trigger based on '{self.new_trigger_config.get('name', 'Unnamed')}'")
+            
+            # Add the clicked point to the shape
+            point = [round(x_pct, self.COORDINATE_PRECISION), round(y_pct, self.COORDINATE_PRECISION)]
+            self.new_trigger_points.append(point)
+            self.new_trigger_config['shape'].append(point)
+            print(f"Added point {len(self.new_trigger_points)}: [{point[0]}, {point[1]}]")
 
 
 def main():
