@@ -993,6 +993,40 @@ class VideoMIDITrigger:
             # Draw trigger area on frame
             if self.show_triggers:
                 trigger.draw_on_frame(frame)
+        
+        # Draw creation mode visual feedback
+        if self.creation_mode and self.new_trigger_points:
+            self._draw_creation_overlay(frame)
+    
+    def _draw_creation_overlay(self, frame):
+        """Draw visual feedback for points being added in creation mode."""
+        if not self.new_trigger_points:
+            return
+        
+        # Convert percentage points to pixel coordinates
+        pixel_points = []
+        for point in self.new_trigger_points:
+            px = int(self.frame_width * point[0] / 100)
+            py = int(self.frame_height * point[1] / 100)
+            pixel_points.append((px, py))
+        
+        # Draw lines connecting the points
+        for i in range(len(pixel_points) - 1):
+            cv2.line(frame, pixel_points[i], pixel_points[i + 1], (0, 255, 255), 2)  # Yellow lines
+        
+        # If we have 3+ points, draw a line from last to first to show the closed shape
+        if len(pixel_points) >= 3:
+            cv2.line(frame, pixel_points[-1], pixel_points[0], (0, 255, 255), 1)  # Thinner line for closure
+        
+        # Draw circles at each point
+        for i, point in enumerate(pixel_points):
+            # Larger circle for the first point
+            if i == 0:
+                cv2.circle(frame, point, 8, (0, 255, 0), -1)  # Green filled circle
+                cv2.circle(frame, point, 8, (255, 255, 255), 2)  # White border
+            else:
+                cv2.circle(frame, point, 6, (0, 255, 255), -1)  # Yellow filled circle
+                cv2.circle(frame, point, 6, (255, 255, 255), 2)  # White border
     
     def reset_triggers(self):
         """Reset all triggers and send MIDI Note Off messages."""
@@ -1148,6 +1182,22 @@ class VideoMIDITrigger:
             
             # Update triggers in the data
             data['triggers'] = self.config['triggers']
+            
+            # Set flow style for shape coordinates to get [x, y] format instead of nested lists
+            for trigger in data['triggers']:
+                if 'shape' in trigger and trigger['shape']:
+                    for point in trigger['shape']:
+                        if isinstance(point, list):
+                            # Convert to flow style for compact representation
+                            from ruamel.yaml.comments import CommentedSeq
+                            if not isinstance(point, CommentedSeq):
+                                point_seq = CommentedSeq(point)
+                            else:
+                                point_seq = point
+                            point_seq.fa.set_flow_style()
+                            # Replace the point in the shape list
+                            idx = trigger['shape'].index(point)
+                            trigger['shape'][idx] = point_seq
             
             # Write back to file
             with open(self.config_path, 'w') as f:
