@@ -15,6 +15,7 @@ import json
 import subprocess
 from pathlib import Path
 import re
+import copy
 from ruamel.yaml import YAML
 
 
@@ -671,6 +672,9 @@ class Trigger:
 class VideoMIDITrigger:
     """Main application class."""
     
+    # Coordinate precision for trigger creation (decimal places)
+    COORDINATE_PRECISION = 1
+    
     def __init__(self, config_name):
         self.config_path = Path(config_name)
         if not self.config_path.suffix:
@@ -1082,7 +1086,7 @@ class VideoMIDITrigger:
                     print("Press ENTER to save and exit creation mode.")
                     print("=====================\n")
                 elif key == 8 or key == 127:  # Backspace or Delete
-                    if self.creation_mode and self.new_trigger_points:
+                    if self.creation_mode and self.new_trigger_config is not None and self.new_trigger_points:
                         removed = self.new_trigger_points.pop()
                         self.new_trigger_config['shape'].pop()
                         print(f"Removed point: [{removed[0]}, {removed[1]}]. {len(self.new_trigger_points)} points remaining.")
@@ -1173,7 +1177,6 @@ class VideoMIDITrigger:
                     return
                 
                 # Duplicate the last trigger
-                import copy
                 last_trigger = self.config['triggers'][-1]
                 self.new_trigger_config = copy.deepcopy(last_trigger)
                 
@@ -1186,7 +1189,7 @@ class VideoMIDITrigger:
                 print(f"Creating new trigger based on '{self.new_trigger_config.get('name', 'Unnamed')}'")
             
             # Add the clicked point to the shape
-            point = [round(x_pct, 1), round(y_pct, 1)]
+            point = [round(x_pct, self.COORDINATE_PRECISION), round(y_pct, self.COORDINATE_PRECISION)]
             self.new_trigger_points.append(point)
             self.new_trigger_config['shape'].append(point)
             print(f"Added point {len(self.new_trigger_points)}: [{point[0]}, {point[1]}]")
