@@ -1,0 +1,22 @@
+source: camera
+# Test configuration for trigger creation mode
+
+camera:
+  width: 640
+  height: 480
+  fps: 30
+
+triggers:
+  # Initial test trigger
+  - name: "Test Trigger"
+    position:
+      x: 25
+      y: 25
+      width: 20
+      height: 20
+    type: "brightness"
+    threshold: 150
+    midi:
+      note: 60  # C
+      velocity: 100
+      channel: 0
