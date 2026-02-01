@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import copy
 from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedSeq
 
 
 NOTE_NAME_RE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d+)?$")
@@ -1189,7 +1190,6 @@ class VideoMIDITrigger:
                     for point in trigger['shape']:
                         if isinstance(point, list):
                             # Convert to flow style for compact representation
-                            from ruamel.yaml.comments import CommentedSeq
                             if not isinstance(point, CommentedSeq):
                                 point_seq = CommentedSeq(point)
                             else:
