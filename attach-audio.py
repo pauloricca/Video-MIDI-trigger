@@ -86,7 +86,7 @@ def main():
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(
         description='Replace the audio in an MP4 video with an MP3 audio file.',
-        epilog='Example: python attach-audio.py audio.mp3 video.mp4 video-new.mp4'
+        epilog='Example: python3 attach-audio.py audio.mp3 video.mp4 video-new.mp4'
     )
     parser.add_argument('audio', help='Path to the MP3 audio file')
     parser.add_argument('video', help='Path to the input MP4 video file')
