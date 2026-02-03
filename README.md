@@ -5,6 +5,7 @@ A Python application that triggers MIDI messages based on visual events in a vid
 ## Features
 
 - Video playback with real-time trigger detection
+- **MIDI file recording** - Records all MIDI events to a file for perfect audio-video synchronization
 - YAML-based configuration for easy setup
 - Multiple trigger areas with independent MIDI mappings
 - Brightness-based trigger detection
@@ -288,6 +289,44 @@ This is particularly useful for:
 - **q**: Quit the application
 - **r**: Restart the video from the beginning (also resets the first frame for difference triggers)
 
+## MIDI File Recording
+
+The application automatically records all MIDI events to a `.midi` file while playing. This enables perfect audio-video synchronization when creating final audio renders.
+
+### How It Works
+
+1. **Automatic Recording**: All MIDI events sent during playback are simultaneously recorded to a file
+2. **Video-Relative Timing**: Events are timestamped relative to the video's timeline for perfect sync
+3. **Single Loop Recording**: For looping videos, only the first loop is recorded (subsequent loops don't add to the file)
+4. **Automatic Naming**: The MIDI file uses the same name as your YAML config (e.g., `myconfig.yaml` → `myconfig.midi`)
+5. **Saved on Exit**: The MIDI file is automatically saved when you:
+   - Press 'q' to quit
+   - Press Ctrl+C to interrupt
+   - Close the application window
+
+### Using the MIDI File
+
+After recording, you can:
+- Import the `.midi` file into your DAW alongside the video
+- The timing will be perfectly synchronized with the video
+- All MIDI events (notes, velocities, CCs) are preserved
+- The file uses standard MIDI format and works with any DAW or MIDI software
+
+### Example Workflow
+
+```bash
+# Run the application with your config
+python video-midi-trigger.py myproject
+
+# The app plays the video and shows: "MIDI recording: Will save to myproject.midi"
+# Triggers activate during playback, sending MIDI in real-time
+# Press 'q' to quit when done
+
+# Result: myproject.midi file is created with all events
+# Import both myproject.mp4 and myproject.midi into your DAW
+# Perfect sync guaranteed!
+```
+
 ## How it Works
 
 1. The application loads the specified YAML configuration file
@@ -296,10 +335,12 @@ This is particularly useful for:
    - Analyzes the brightness in each trigger area
    - Detects motion by comparing frame differences (previous frame for "motion", first frame for "difference")
    - Sends MIDI Note On/Off for brightness/darkness/motion/difference triggers
+   - **Records MIDI events to file with video-relative timestamps**
    - Sends MIDI CC values for range triggers (mapped from brightness) and difference range triggers (mapped from first frame difference)
 4. Displays the video with visual overlays showing trigger areas:
    - Red rectangle: Inactive trigger
    - Green rectangle: Active trigger
+5. **Saves the MIDI file when you quit the application**
 
 ## Requirements
 
@@ -308,6 +349,7 @@ This is particularly useful for:
 - PyYAML
 - python-rtmidi
 - NumPy
+- mido (for MIDI file creation)
 
 ## MIDI Setup
 
