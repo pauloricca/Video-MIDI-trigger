@@ -3,3 +3,4 @@ opencv-python>=4.5.0,<4.9
 pyyaml>=5.4.0
 python-rtmidi>=1.4.0
 ruamel.yaml>=0.17.0
+mido>=1.2.0

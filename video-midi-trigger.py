@@ -16,8 +16,11 @@ import subprocess
 from pathlib import Path
 import re
 import copy
+import atexit
+import argparse
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
+import mido
 
 
 NOTE_NAME_RE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d+)?$")
@@ -148,20 +151,142 @@ class MIDIController:
 class MIDIManager:
     """Manages MIDI controllers for multiple devices."""
 
-    def __init__(self, default_device_name=None):
+    def __init__(self, default_device_name=None, recorder=None):
         self.default_device_name = default_device_name
         self.controllers = {}
+        self.recorder = recorder
+        self.current_video_time = 0.0  # Current video time in seconds
 
     def get_controller(self, device_name=None):
         resolved_name = device_name if device_name is not None else self.default_device_name
         if resolved_name not in self.controllers:
             self.controllers[resolved_name] = MIDIController(device_name=resolved_name)
         return self.controllers[resolved_name]
+    
+    def set_video_time(self, video_time):
+        """Set the current video time for MIDI recording."""
+        self.current_video_time = video_time
+    
+    def send_note_on(self, device_name, note, velocity, channel):
+        """Send note on and record if recorder is set."""
+        controller = self.get_controller(device_name)
+        controller.send_note_on(note, velocity, channel)
+        if self.recorder:
+            self.recorder.record_event('note_on', self.current_video_time, note=note, velocity=velocity, channel=channel)
+    
+    def send_note_off(self, device_name, note, channel):
+        """Send note off and record if recorder is set."""
+        controller = self.get_controller(device_name)
+        controller.send_note_off(note, channel)
+        if self.recorder:
+            self.recorder.record_event('note_off', self.current_video_time, note=note, channel=channel)
+    
+    def send_cc(self, device_name, control, value, channel):
+        """Send CC and record if recorder is set."""
+        controller = self.get_controller(device_name)
+        controller.send_cc(control, value, channel)
+        if self.recorder:
+            self.recorder.record_event('control_change', self.current_video_time, control=control, value=value, channel=channel)
 
     def close_all(self):
         for controller in self.controllers.values():
             controller.close()
         self.controllers = {}
+
+
+class MIDIFileRecorder:
+    """Records MIDI events to a file with video-relative timing."""
+    
+    def __init__(self, output_filename, fps=30):
+        """
+        Initialize MIDI file recorder.
+        
+        Args:
+            output_filename: Path to save MIDI file
+            fps: Video frames per second (for timing calculations)
+        """
+        self.output_filename = output_filename
+        self.fps = fps
+        self.events = []  # List of (time_seconds, message) tuples
+        self.recording = True
+        self.first_loop_completed = False
+        
+    def start_recording(self):
+        """Start recording (no-op for compatibility, timing now comes from video frames)."""
+        pass
+        
+    def record_event(self, message_type, video_time, **kwargs):
+        """
+        Record a MIDI event with video time.
+        
+        Args:
+            message_type: 'note_on', 'note_off', or 'control_change'
+            video_time: Current video time in seconds (based on frame position / FPS)
+            **kwargs: MIDI message parameters (note, velocity, channel, control, value)
+        """
+        if not self.recording or self.first_loop_completed:
+            return
+        
+        # Create mido message based on type
+        if message_type == 'note_on':
+            msg = mido.Message('note_on',
+                             note=kwargs['note'],
+                             velocity=kwargs['velocity'],
+                             channel=kwargs['channel'])
+        elif message_type == 'note_off':
+            msg = mido.Message('note_off',
+                             note=kwargs['note'],
+                             velocity=0,
+                             channel=kwargs['channel'])
+        elif message_type == 'control_change':
+            msg = mido.Message('control_change',
+                             control=kwargs['control'],
+                             value=kwargs['value'],
+                             channel=kwargs['channel'])
+        else:
+            return
+            
+        self.events.append((video_time, msg))
+        
+    def mark_loop_complete(self):
+        """Mark that the first loop has completed (stop recording for looping videos)."""
+        self.first_loop_completed = True
+        print("MIDI recording: First loop completed, stopped recording.")
+        
+    def save(self):
+        """Save recorded MIDI events to file."""
+        if not self.events:
+            print(f"MIDI recording: No events recorded, skipping file creation.")
+            return
+            
+        # Create MIDI file
+        mid = mido.MidiFile()
+        track = mido.MidiTrack()
+        mid.tracks.append(track)
+        
+        # Sort events by time
+        sorted_events = sorted(self.events, key=lambda x: x[0])
+        
+        # Convert absolute times to delta times
+        previous_time = 0.0
+        for event_time, msg in sorted_events:
+            # Convert seconds to ticks (using default tempo and ticks_per_beat)
+            # mido uses 480 ticks per beat by default
+            delta_time = event_time - previous_time
+            delta_ticks = mido.second2tick(delta_time, mid.ticks_per_beat, 500000)  # 500000 microseconds per beat (120 BPM)
+            
+            # Create a copy of the message with the delta time
+            msg_with_time = msg.copy(time=int(delta_ticks))
+            track.append(msg_with_time)
+            
+            previous_time = event_time
+            
+        # Save to file
+        try:
+            mid.save(self.output_filename)
+            print(f"MIDI recording: Saved to {self.output_filename} ({len(self.events)} events)")
+        except Exception as e:
+            print(f"MIDI recording: Error saving file: {e}")
 
 
 class Trigger:
@@ -676,13 +801,16 @@ class VideoMIDITrigger:
     # Coordinate precision for trigger creation (decimal places)
     COORDINATE_PRECISION = 1
     
-    def __init__(self, config_name):
+    def __init__(self, config_name, save_midi=True):
         self.config_path = Path(config_name)
         if not self.config_path.suffix:
             self.config_path = Path(f"{config_name}.yaml")
         
         if not self.config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
+        
+        # MIDI file saving flag
+        self.save_midi = save_midi
         
         # Load configuration and initialize
         self.config_mtime = None
@@ -698,22 +826,43 @@ class VideoMIDITrigger:
         self.scale = 1.0
         self.show_triggers = True
         self.window_name = "Video-MIDI Trigger"
+        self.frame_count = 0
+        self.video_duration_s = None
+        self.loop_start_time = None
         
         # Creation mode state
         self.creation_mode = False
         self.new_trigger_config = None
         self.new_trigger_points = []
         
+        # Camera timing state (for wall-clock time when using camera)
+        self._camera_start_time = None
+        
         self._load_config()
         
-        # Initialize MIDI controllers (device changes require restart for global default)
+        # Initialize video capture first to get FPS
+        self._init_capture()
+        
+        # Initialize MIDI file recorder (if enabled)
+        # Create output filename from config name (e.g., abc.yaml -> abc.midi)
+        # Use with_suffix to preserve the directory path
+        midi_path = self.config_path.with_suffix('.midi')
+        if self.save_midi:
+            self.midi_recorder = MIDIFileRecorder(str(midi_path), fps=self.fps)
+            
+            # Register cleanup handler to ensure MIDI file is saved on exit
+            atexit.register(self._save_midi_on_exit)
+        else:
+            self.midi_recorder = None
+        
+        # Track if we've seen a loop (for stopping recording after first loop)
+        self.loop_count = 0
+        
+        # Initialize MIDI controllers with recorder (device changes require restart for global default)
         device_name = self.config.get('device')
-        self.midi_manager = MIDIManager(default_device_name=device_name)
+        self.midi_manager = MIDIManager(default_device_name=device_name, recorder=self.midi_recorder)
         self.midi_manager.get_controller(None)
         self._ensure_trigger_devices()
-        
-        # Initialize video capture
-        self._init_capture()
         
         # Setup trigger ROIs
         for trigger in self.triggers:
@@ -728,6 +877,17 @@ class VideoMIDITrigger:
             print(f"Video: {self.video_path}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
         print(f"FPS: {self.fps}")
+        if not self.use_camera and self.video_duration_s is not None:
+            print(f"Length: {self.video_duration_s:.3f}s ({self.frame_count} frames)")
+        if self.save_midi:
+            print(f"MIDI recording: Will save to {midi_path}")
+        else:
+            print("MIDI recording: Disabled (--no-save)")
+    
+    def _save_midi_on_exit(self):
+        """Emergency save handler for MIDI file (called on exit)."""
+        if hasattr(self, 'midi_recorder') and self.midi_recorder:
+            self.midi_recorder.save()
 
     def _load_config(self):
         with open(self.config_path, 'r') as f:
@@ -806,6 +966,9 @@ class VideoMIDITrigger:
         self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if self.frame_count > 0 and self.fps and self.fps > 0:
+            self.video_duration_s = self.frame_count / self.fps
         if self.use_camera and (not self.fps or self.fps <= 0) and self.target_fps:
             self.fps = self.target_fps
         if self.scale != 1.0:
@@ -938,8 +1101,7 @@ class VideoMIDITrigger:
                     trigger.last_cc_value = value
                     cc = trigger.midi_config['cc']
                     channel = trigger.midi_config.get('channel', 0)
-                    midi = self.midi_manager.get_controller(trigger.device_name)
-                    midi.send_cc(cc, value, channel)
+                    self.midi_manager.send_cc(trigger.device_name, cc, value, channel)
                 trigger.active = True
             else:
                 triggered = trigger.check_trigger(frame, gray_frame=gray_frame)
@@ -962,8 +1124,7 @@ class VideoMIDITrigger:
                             note = trigger.midi_config['note']
                             velocity = trigger.get_velocity()
                             channel = trigger.midi_config['channel']
-                            midi = self.midi_manager.get_controller(trigger.device_name)
-                            midi.send_note_on(note, velocity, channel)
+                            self.midi_manager.send_note_on(trigger.device_name, note, velocity, channel)
                             if PRINT_MIDI_SENDS:
                                 print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
                 
@@ -986,8 +1147,7 @@ class VideoMIDITrigger:
                             trigger.last_deactivated_time = current_time
                             note = trigger.midi_config['note']
                             channel = trigger.midi_config['channel']
-                            midi = self.midi_manager.get_controller(trigger.device_name)
-                            midi.send_note_off(note, channel)
+                            self.midi_manager.send_note_off(trigger.device_name, note, channel)
                             if PRINT_MIDI_SENDS:
                                 print(f"✗ {trigger.name}: Note OFF (Note: {note})")
             
@@ -1036,8 +1196,7 @@ class VideoMIDITrigger:
                 trigger.active = False
                 note = trigger.midi_config['note']
                 channel = trigger.midi_config['channel']
-                midi = self.midi_manager.get_controller(trigger.device_name)
-                midi.send_note_off(note, channel)
+                self.midi_manager.send_note_off(trigger.device_name, note, channel)
             # Reset motion detection state
             if trigger.trigger_type == 'motion':
                 trigger.previous_roi = None
@@ -1047,6 +1206,11 @@ class VideoMIDITrigger:
             # Reset timing state for debounce and throttle
             trigger.became_invalid_time = None
             trigger.last_deactivated_time = None
+        
+        # Reset MIDI timing for next loop
+        self.midi_manager.current_video_time = 0.0
+        if self.use_camera:
+            self._camera_start_time = None
     
     def reset_first_frame(self):
         """Reset the first frame for difference triggers."""
@@ -1072,6 +1236,12 @@ class VideoMIDITrigger:
         # Calculate delay between frames (in milliseconds)
         delay = int(1000 / self.fps) if self.fps > 0 else 1
         
+        # Start MIDI recording (if enabled)
+        if self.midi_recorder:
+            self.midi_recorder.start_recording()
+        if not self.use_camera:
+            self.loop_start_time = time.perf_counter()
+        
         try:
             while True:
                 loop_start = time.perf_counter()
@@ -1080,9 +1250,38 @@ class VideoMIDITrigger:
                 if not ret:
                     # Video ended, reset triggers and restart from beginning
                     print("Video ended, restarting...")
+                    if not self.use_camera and self.loop_start_time is not None:
+                        loop_elapsed = time.perf_counter() - self.loop_start_time
+                        print(f"Loop {self.loop_count + 1} duration: {loop_elapsed:.3f}s")
+                    self.loop_count += 1
+                    
+                    # For non-camera sources (videos), mark first loop complete
+                    if not self.use_camera and self.loop_count == 1 and self.midi_recorder:
+                        self.midi_recorder.mark_loop_complete()
+                    
                     self.reset_triggers()
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if not self.use_camera:
+                        self.loop_start_time = time.perf_counter()
                     continue
+
+                # Get current video time based on frame position (not playback time)
+                # This ensures MIDI timing matches video timing exactly
+                if not self.use_camera:
+                    current_frame = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+                    if self.fps <= 0:
+                        print(f"Warning: Invalid FPS ({self.fps}), defaulting to 30 for timing calculations")
+                        video_time = current_frame / 30.0
+                    else:
+                        video_time = current_frame / self.fps
+                else:
+                    # For camera, use wall-clock time since there's no fixed timeline
+                    if self._camera_start_time is None:
+                        self._camera_start_time = time.time()
+                    video_time = time.time() - self._camera_start_time
+                
+                # Set video time for MIDI recording
+                self.midi_manager.set_video_time(video_time)
 
                 if self.use_camera and self.mirror:
                     frame = cv2.flip(frame, 1)
@@ -1108,6 +1307,8 @@ class VideoMIDITrigger:
                     self.reset_triggers()
                     self.reset_first_frame()
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if not self.use_camera:
+                        self.loop_start_time = time.perf_counter()
                 elif key == ord('h'):
                     self.show_triggers = not self.show_triggers
                 elif key == ord('c'):
@@ -1161,8 +1362,11 @@ class VideoMIDITrigger:
             if trigger.active and 'note' in trigger.midi_config:
                 note = trigger.midi_config['note']
                 channel = trigger.midi_config['channel']
-                midi = self.midi_manager.get_controller(trigger.device_name)
-                midi.send_note_off(note, channel)
+                self.midi_manager.send_note_off(trigger.device_name, note, channel)
+        
+        # Save MIDI file
+        if self.midi_recorder:
+            self.midi_recorder.save()
         
         self.cap.release()
         cv2.destroyAllWindows()
@@ -1247,15 +1451,24 @@ class VideoMIDITrigger:
 
 def main():
     """Main entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python video-midi-trigger.py <config_name>")
-        print("Example: python video-midi-trigger.py road")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description='Video-MIDI Trigger - Trigger MIDI messages based on visual events in a video',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument('config_name', 
+                       help='Name of the configuration file (without .yaml extension)')
+    parser.add_argument('--no-save', 
+                       action='store_true',
+                       help='Disable MIDI file recording (only send real-time MIDI)')
     
-    config_name = sys.argv[1]
+    args = parser.parse_args()
+    
+    config_name = args.config_name
+    save_midi = not args.no_save
+    app = None
     
     try:
-        app = VideoMIDITrigger(config_name)
+        app = VideoMIDITrigger(config_name, save_midi=save_midi)
         app.run()
     except FileNotFoundError as e:
         print(f"File not found: {e}")
@@ -1265,11 +1478,15 @@ def main():
         sys.exit(1)
     except KeyboardInterrupt:
         print("\nInterrupted by user")
+        if app and hasattr(app, 'cleanup'):
+            app.cleanup()
         sys.exit(0)
     except Exception as e:
         print(f"Unexpected error: {e}")
         import traceback
         traceback.print_exc()
+        if app and hasattr(app, 'cleanup'):
+            app.cleanup()
         sys.exit(1)
 
 
