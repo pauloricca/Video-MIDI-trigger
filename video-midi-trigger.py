@@ -826,6 +826,9 @@ class VideoMIDITrigger:
         self.scale = 1.0
         self.show_triggers = True
         self.window_name = "Video-MIDI Trigger"
+        self.frame_count = 0
+        self.video_duration_s = None
+        self.loop_start_time = None
         
         # Creation mode state
         self.creation_mode = False
@@ -841,10 +844,10 @@ class VideoMIDITrigger:
         self._init_capture()
         
         # Initialize MIDI file recorder (if enabled)
+        # Create output filename from config name (e.g., abc.yaml -> abc.midi)
+        # Use with_suffix to preserve the directory path
+        midi_path = self.config_path.with_suffix('.midi')
         if self.save_midi:
-            # Create output filename from config name (e.g., abc.yaml -> abc.midi)
-            # Use with_suffix to preserve the directory path
-            midi_path = self.config_path.with_suffix('.midi')
             self.midi_recorder = MIDIFileRecorder(str(midi_path), fps=self.fps)
             
             # Register cleanup handler to ensure MIDI file is saved on exit
@@ -874,9 +877,9 @@ class VideoMIDITrigger:
             print(f"Video: {self.video_path}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
         print(f"FPS: {self.fps}")
-        
+        if not self.use_camera and self.video_duration_s is not None:
+            print(f"Length: {self.video_duration_s:.3f}s ({self.frame_count} frames)")
         if self.save_midi:
-            midi_path = self.config_path.with_suffix('.midi')
             print(f"MIDI recording: Will save to {midi_path}")
         else:
             print("MIDI recording: Disabled (--no-save)")
@@ -963,6 +966,9 @@ class VideoMIDITrigger:
         self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if self.frame_count > 0 and self.fps and self.fps > 0:
+            self.video_duration_s = self.frame_count / self.fps
         if self.use_camera and (not self.fps or self.fps <= 0) and self.target_fps:
             self.fps = self.target_fps
         if self.scale != 1.0:
@@ -1233,6 +1239,8 @@ class VideoMIDITrigger:
         # Start MIDI recording (if enabled)
         if self.midi_recorder:
             self.midi_recorder.start_recording()
+        if not self.use_camera:
+            self.loop_start_time = time.perf_counter()
         
         try:
             while True:
@@ -1242,6 +1250,9 @@ class VideoMIDITrigger:
                 if not ret:
                     # Video ended, reset triggers and restart from beginning
                     print("Video ended, restarting...")
+                    if not self.use_camera and self.loop_start_time is not None:
+                        loop_elapsed = time.perf_counter() - self.loop_start_time
+                        print(f"Loop {self.loop_count + 1} duration: {loop_elapsed:.3f}s")
                     self.loop_count += 1
                     
                     # For non-camera sources (videos), mark first loop complete
@@ -1250,6 +1261,8 @@ class VideoMIDITrigger:
                     
                     self.reset_triggers()
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if not self.use_camera:
+                        self.loop_start_time = time.perf_counter()
                     continue
 
                 # Get current video time based on frame position (not playback time)
@@ -1294,6 +1307,8 @@ class VideoMIDITrigger:
                     self.reset_triggers()
                     self.reset_first_frame()
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if not self.use_camera:
+                        self.loop_start_time = time.perf_counter()
                 elif key == ord('h'):
                     self.show_triggers = not self.show_triggers
                 elif key == ord('c'):

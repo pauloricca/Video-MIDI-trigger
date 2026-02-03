@@ -1,76 +1,248 @@
-source: OBS Virtual Camera
+# https://www.earthcam.com/world/england/london/abbeyroad/?cam=abbeyroad_uk#google_vignette
 source: abbey-night-long.mp4
 scale: 0.25
-# https://www.earthcam.com/world/england/london/abbeyroad/?cam=abbeyroad_uk#google_vignette
-# source: video2.mp4
 device: "IAC Driver Bus 1"
-# device: "H4MIDI-WC Port 1"
-# device: "S-1 MIDI IN"
 
 triggers:
-  
-  - name: "1"
-    position:
-      x: 33.3
-      y: 23
-      width: 1
-      height: 2
-    type: "brightness"
-    threshold: 200  # Average pixel difference
-    midi:
-      note: C2
-      velocity: 127
-      channel: 0
-  
-  - name: "2"
-    position:
-      x: 40.6
-      y: 19
-      width: 1
-      height: 2
-    type: "brightness"
-    threshold: 200  # Average pixel difference
-    midi:
-      note: D2
-      velocity: 127
-      channel: 0
-  
-  - name: "3"
-    position:
-      x: 41.9
-      y: 21.5
-      width: 1
-      height: 2
-    type: "brightness"
-    threshold: 200  # Average pixel difference
-    midi:
-      note: E2
-      velocity: 127
-      channel: 0
-  
-  - name: "4"
-    position:
-      x: 50.7
-      y: 17.5
-      width: 1
-      height: 2
-    type: "brightness"
-    threshold: 200  # Average pixel difference
-    midi:
-      note: F2
-      velocity: 127
-      channel: 0
-  
-  - name: "5"
-    position:
-      x: 90.5
-      y: 23.5
-      width: 1
-      height: 2
-    type: "brightness"
-    threshold: 200  # Average pixel difference
-    midi:
-      note: G2
-      velocity: 127
-      channel: 0
-  
+- name: '1'
+  position:
+    x: 33.3
+    y: 23
+    width: 1
+    height: 2
+  type: brightness
+  threshold: 200
+  midi:
+    note: 36
+    velocity: 127
+    channel: 0
+- name: '2'
+  position:
+    x: 40.6
+    y: 19
+    width: 1
+    height: 2
+  type: brightness
+  threshold: 200
+  midi:
+    note: 38
+    velocity: 127
+    channel: 0
+- name: '3'
+  position:
+    x: 41.9
+    y: 21.5
+    width: 1
+    height: 2
+  type: brightness
+  threshold: 200
+  midi:
+    note: 40
+    velocity: 127
+    channel: 0
+- name: '4'
+  position:
+    x: 50.7
+    y: 17.5
+    width: 1
+    height: 2
+  type: brightness
+  threshold: 200
+  midi:
+    note: 41
+    velocity: 127
+    channel: 0
+- name: '5'
+  position:
+    x: 90.5
+    y: 23.5
+    width: 1
+    height: 2
+  type: brightness
+  threshold: 200
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [2.5, 59.3]
+  - [3.5, 63.3]
+  - [7.9, 61.9]
+  - [6.7, 55.6]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 83
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [12.3, 55.2]
+  - [13.8, 59.6]
+  - [18.1, 57.4]
+  - [17.1, 52.2]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 83
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [22.5, 50.4]
+  - [23.8, 55.2]
+  - [29.0, 52.2]
+  - [27.5, 46.3]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 83
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [36.5, 48.5]
+  - [41.0, 46.3]
+  - [40.4, 41.5]
+  - [36.0, 43.0]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 83
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [45.8, 44.1]
+  - [50.2, 41.1]
+  - [47.9, 37.4]
+  - [44.2, 40.4]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 83
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [54.8, 40.0]
+  - [58.3, 37.0]
+  - [56.5, 34.1]
+  - [53.1, 35.6]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [64.4, 34.8]
+  - [67.7, 33.0]
+  - [66.2, 30.0]
+  - [63.5, 30.7]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [72.1, 31.5]
+  - [75.0, 29.6]
+  - [73.8, 26.3]
+  - [70.6, 27.4]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [48.5, 94.1]
+  - [54.8, 94.4]
+  - [59.0, 88.5]
+  - [53.5, 83.3]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [64.0, 79.6]
+  - [69.8, 71.9]
+  - [65.6, 67.4]
+  - [61.0, 73.7]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [75.2, 64.1]
+  - [79.6, 57.4]
+  - [75.6, 54.1]
+  - [71.5, 58.5]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [83.8, 51.5]
+  - [87.5, 45.6]
+  - [85.0, 42.2]
+  - [81.5, 46.7]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [89.8, 42.6]
+  - [92.5, 37.4]
+  - [90.6, 34.8]
+  - [87.9, 38.1]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
+- name: 'up'
+  shape:
+  - [95.4, 33.7]
+  - [98.5, 31.5]
+  - [97.1, 29.6]
+  - [94.0, 31.1]
+  type: motion
+  threshold: 3
+  debounce: 0.1
+  midi:
+    note: 43
+    velocity: 127
+    channel: 0
