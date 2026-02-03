@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import copy
 import atexit
+import argparse
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 import mido
@@ -800,13 +801,16 @@ class VideoMIDITrigger:
     # Coordinate precision for trigger creation (decimal places)
     COORDINATE_PRECISION = 1
     
-    def __init__(self, config_name):
+    def __init__(self, config_name, save_midi=True):
         self.config_path = Path(config_name)
         if not self.config_path.suffix:
             self.config_path = Path(f"{config_name}.yaml")
         
         if not self.config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
+        
+        # MIDI file saving flag
+        self.save_midi = save_midi
         
         # Load configuration and initialize
         self.config_mtime = None
@@ -828,19 +832,25 @@ class VideoMIDITrigger:
         self.new_trigger_config = None
         self.new_trigger_points = []
         
+        # Camera timing state (for wall-clock time when using camera)
+        self._camera_start_time = None
+        
         self._load_config()
         
         # Initialize video capture first to get FPS
         self._init_capture()
         
-        # Initialize MIDI file recorder
-        # Create output filename from config name (e.g., abc.yaml -> abc.midi)
-        # Use with_suffix to preserve the directory path
-        midi_path = self.config_path.with_suffix('.midi')
-        self.midi_recorder = MIDIFileRecorder(str(midi_path), fps=self.fps)
-        
-        # Register cleanup handler to ensure MIDI file is saved on exit
-        atexit.register(self._save_midi_on_exit)
+        # Initialize MIDI file recorder (if enabled)
+        if self.save_midi:
+            # Create output filename from config name (e.g., abc.yaml -> abc.midi)
+            # Use with_suffix to preserve the directory path
+            midi_path = self.config_path.with_suffix('.midi')
+            self.midi_recorder = MIDIFileRecorder(str(midi_path), fps=self.fps)
+            
+            # Register cleanup handler to ensure MIDI file is saved on exit
+            atexit.register(self._save_midi_on_exit)
+        else:
+            self.midi_recorder = None
         
         # Track if we've seen a loop (for stopping recording after first loop)
         self.loop_count = 0
@@ -864,7 +874,12 @@ class VideoMIDITrigger:
             print(f"Video: {self.video_path}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
         print(f"FPS: {self.fps}")
-        print(f"MIDI recording: Will save to {midi_path}")
+        
+        if self.save_midi:
+            midi_path = self.config_path.with_suffix('.midi')
+            print(f"MIDI recording: Will save to {midi_path}")
+        else:
+            print("MIDI recording: Disabled (--no-save)")
     
     def _save_midi_on_exit(self):
         """Emergency save handler for MIDI file (called on exit)."""
@@ -1185,6 +1200,11 @@ class VideoMIDITrigger:
             # Reset timing state for debounce and throttle
             trigger.became_invalid_time = None
             trigger.last_deactivated_time = None
+        
+        # Reset MIDI timing for next loop
+        self.midi_manager.current_video_time = 0.0
+        if self.use_camera:
+            self._camera_start_time = None
     
     def reset_first_frame(self):
         """Reset the first frame for difference triggers."""
@@ -1210,8 +1230,9 @@ class VideoMIDITrigger:
         # Calculate delay between frames (in milliseconds)
         delay = int(1000 / self.fps) if self.fps > 0 else 1
         
-        # Start MIDI recording
-        self.midi_recorder.start_recording()
+        # Start MIDI recording (if enabled)
+        if self.midi_recorder:
+            self.midi_recorder.start_recording()
         
         try:
             while True:
@@ -1224,7 +1245,7 @@ class VideoMIDITrigger:
                     self.loop_count += 1
                     
                     # For non-camera sources (videos), mark first loop complete
-                    if not self.use_camera and self.loop_count == 1:
+                    if not self.use_camera and self.loop_count == 1 and self.midi_recorder:
                         self.midi_recorder.mark_loop_complete()
                     
                     self.reset_triggers()
@@ -1235,10 +1256,14 @@ class VideoMIDITrigger:
                 # This ensures MIDI timing matches video timing exactly
                 if not self.use_camera:
                     current_frame = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
-                    video_time = current_frame / self.fps if self.fps > 0 else 0.0
+                    if self.fps <= 0:
+                        print(f"Warning: Invalid FPS ({self.fps}), defaulting to 30 for timing calculations")
+                        video_time = current_frame / 30.0
+                    else:
+                        video_time = current_frame / self.fps
                 else:
                     # For camera, use wall-clock time since there's no fixed timeline
-                    if not hasattr(self, '_camera_start_time'):
+                    if self._camera_start_time is None:
                         self._camera_start_time = time.time()
                     video_time = time.time() - self._camera_start_time
                 
@@ -1411,16 +1436,24 @@ class VideoMIDITrigger:
 
 def main():
     """Main entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python video-midi-trigger.py <config_name>")
-        print("Example: python video-midi-trigger.py road")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description='Video-MIDI Trigger - Trigger MIDI messages based on visual events in a video',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument('config_name', 
+                       help='Name of the configuration file (without .yaml extension)')
+    parser.add_argument('--no-save', 
+                       action='store_true',
+                       help='Disable MIDI file recording (only send real-time MIDI)')
     
-    config_name = sys.argv[1]
+    args = parser.parse_args()
+    
+    config_name = args.config_name
+    save_midi = not args.no_save
     app = None
     
     try:
-        app = VideoMIDITrigger(config_name)
+        app = VideoMIDITrigger(config_name, save_midi=save_midi)
         app.run()
     except FileNotFoundError as e:
         print(f"File not found: {e}")

@@ -35,7 +35,26 @@ source .venv/bin/activate
 python video-midi-trigger.py road
 ```
 
-This will load the `road.yaml` configuration file.
+This will load the `road.yaml` configuration file and automatically record MIDI events to `road.midi`.
+
+### Command-Line Options
+
+```bash
+python video-midi-trigger.py <config_name> [--no-save]
+```
+
+- `config_name`: Name of the configuration file (without .yaml extension)
+- `--no-save`: Disable MIDI file recording (only send real-time MIDI)
+
+**Examples:**
+
+```bash
+# Normal usage - records MIDI to file
+python video-midi-trigger.py myproject
+
+# Disable MIDI file recording - only real-time MIDI output
+python video-midi-trigger.py myproject --no-save
+```
 
 ## Configuration
 
