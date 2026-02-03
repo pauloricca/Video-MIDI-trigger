@@ -44,4 +44,6 @@ Thumbs.db
 *.mkv
 *.midi
 *.mid
+*.mp3
+*.wav
 creation_mode_mockup.png
