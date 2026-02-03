@@ -154,6 +154,7 @@ class MIDIManager:
         self.default_device_name = default_device_name
         self.controllers = {}
         self.recorder = recorder
+        self.current_video_time = 0.0  # Current video time in seconds
 
     def get_controller(self, device_name=None):
         resolved_name = device_name if device_name is not None else self.default_device_name
@@ -161,26 +162,30 @@ class MIDIManager:
             self.controllers[resolved_name] = MIDIController(device_name=resolved_name)
         return self.controllers[resolved_name]
     
+    def set_video_time(self, video_time):
+        """Set the current video time for MIDI recording."""
+        self.current_video_time = video_time
+    
     def send_note_on(self, device_name, note, velocity, channel):
         """Send note on and record if recorder is set."""
         controller = self.get_controller(device_name)
         controller.send_note_on(note, velocity, channel)
         if self.recorder:
-            self.recorder.record_event('note_on', note=note, velocity=velocity, channel=channel)
+            self.recorder.record_event('note_on', self.current_video_time, note=note, velocity=velocity, channel=channel)
     
     def send_note_off(self, device_name, note, channel):
         """Send note off and record if recorder is set."""
         controller = self.get_controller(device_name)
         controller.send_note_off(note, channel)
         if self.recorder:
-            self.recorder.record_event('note_off', note=note, channel=channel)
+            self.recorder.record_event('note_off', self.current_video_time, note=note, channel=channel)
     
     def send_cc(self, device_name, control, value, channel):
         """Send CC and record if recorder is set."""
         controller = self.get_controller(device_name)
         controller.send_cc(control, value, channel)
         if self.recorder:
-            self.recorder.record_event('control_change', control=control, value=value, channel=channel)
+            self.recorder.record_event('control_change', self.current_video_time, control=control, value=value, channel=channel)
 
     def close_all(self):
         for controller in self.controllers.values():
@@ -202,30 +207,24 @@ class MIDIFileRecorder:
         self.output_filename = output_filename
         self.fps = fps
         self.events = []  # List of (time_seconds, message) tuples
-        self.start_time = None
         self.recording = True
         self.first_loop_completed = False
         
     def start_recording(self):
-        """Start recording timestamp from current time."""
-        self.start_time = time.time()
+        """Start recording (no-op for compatibility, timing now comes from video frames)."""
+        pass
         
-    def record_event(self, message_type, **kwargs):
+    def record_event(self, message_type, video_time, **kwargs):
         """
-        Record a MIDI event with current timestamp.
+        Record a MIDI event with video time.
         
         Args:
             message_type: 'note_on', 'note_off', or 'control_change'
+            video_time: Current video time in seconds (based on frame position / FPS)
             **kwargs: MIDI message parameters (note, velocity, channel, control, value)
         """
         if not self.recording or self.first_loop_completed:
             return
-            
-        if self.start_time is None:
-            self.start_time = time.time()
-            
-        current_time = time.time()
-        elapsed_time = current_time - self.start_time
         
         # Create mido message based on type
         if message_type == 'note_on':
@@ -246,7 +245,7 @@ class MIDIFileRecorder:
         else:
             return
             
-        self.events.append((elapsed_time, msg))
+        self.events.append((video_time, msg))
         
     def mark_loop_complete(self):
         """Mark that the first loop has completed (stop recording for looping videos)."""
@@ -1231,6 +1230,20 @@ class VideoMIDITrigger:
                     self.reset_triggers()
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
+
+                # Get current video time based on frame position (not playback time)
+                # This ensures MIDI timing matches video timing exactly
+                if not self.use_camera:
+                    current_frame = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+                    video_time = current_frame / self.fps if self.fps > 0 else 0.0
+                else:
+                    # For camera, use wall-clock time since there's no fixed timeline
+                    if not hasattr(self, '_camera_start_time'):
+                        self._camera_start_time = time.time()
+                    video_time = time.time() - self._camera_start_time
+                
+                # Set video time for MIDI recording
+                self.midi_manager.set_video_time(video_time)
 
                 if self.use_camera and self.mirror:
                     frame = cv2.flip(frame, 1)
