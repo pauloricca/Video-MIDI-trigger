@@ -296,13 +296,22 @@ The application automatically records all MIDI events to a `.midi` file while pl
 ### How It Works
 
 1. **Automatic Recording**: All MIDI events sent during playback are simultaneously recorded to a file
-2. **Video-Relative Timing**: Events are timestamped relative to the video's timeline for perfect sync
+2. **Video Frame-Based Timing**: Events are timestamped based on the video's frame position (not playback time), ensuring perfect sync even if playback is slow
 3. **Single Loop Recording**: For looping videos, only the first loop is recorded (subsequent loops don't add to the file)
 4. **Automatic Naming**: The MIDI file uses the same name as your YAML config (e.g., `myconfig.yaml` → `myconfig.midi`)
 5. **Saved on Exit**: The MIDI file is automatically saved when you:
    - Press 'q' to quit
    - Press Ctrl+C to interrupt
    - Close the application window
+
+### Timing Accuracy
+
+**Important:** MIDI timing is based on **video frame position**, not playback time. This means:
+- If your computer plays the video slowly (due to processing load), the MIDI file timing is **not affected**
+- Timing is calculated as `current_frame_number / fps`, ensuring sample-accurate synchronization
+- When you import the MIDI file into your DAW with the original video, they will be perfectly in sync
+
+Example: A video at 30fps with an event at frame 15 will always be recorded at 0.5 seconds in the MIDI file, regardless of how long it took to actually play back that frame.
 
 ### Using the MIDI File
 
