@@ -839,6 +839,9 @@ class VideoMIDITrigger:
         midi_filename = self.config_path.stem + '.midi'
         self.midi_recorder = MIDIFileRecorder(midi_filename, fps=self.fps)
         
+        # Register cleanup handler to ensure MIDI file is saved on exit
+        atexit.register(self._save_midi_on_exit)
+        
         # Track if we've seen a loop (for stopping recording after first loop)
         self.loop_count = 0
         
@@ -862,6 +865,11 @@ class VideoMIDITrigger:
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
         print(f"FPS: {self.fps}")
         print(f"MIDI recording: Will save to {midi_filename}")
+    
+    def _save_midi_on_exit(self):
+        """Emergency save handler for MIDI file (called on exit)."""
+        if hasattr(self, 'midi_recorder') and self.midi_recorder:
+            self.midi_recorder.save()
 
     def _load_config(self):
         with open(self.config_path, 'r') as f:
@@ -1395,6 +1403,7 @@ def main():
         sys.exit(1)
     
     config_name = sys.argv[1]
+    app = None
     
     try:
         app = VideoMIDITrigger(config_name)
@@ -1407,11 +1416,15 @@ def main():
         sys.exit(1)
     except KeyboardInterrupt:
         print("\nInterrupted by user")
+        if app:
+            app.cleanup()
         sys.exit(0)
     except Exception as e:
         print(f"Unexpected error: {e}")
         import traceback
         traceback.print_exc()
+        if app:
+            app.cleanup()
         sys.exit(1)
 
 
