@@ -273,7 +273,7 @@ class MIDIFileRecorder:
             # Convert seconds to ticks (using default tempo and ticks_per_beat)
             # mido uses 480 ticks per beat by default
             delta_time = event_time - previous_time
-            delta_ticks = mido.second2tick(delta_time, mid.ticks_per_beat, 500000)  # 500000 = 120 BPM tempo
+            delta_ticks = mido.second2tick(delta_time, mid.ticks_per_beat, 500000)  # 500000 microseconds per beat (120 BPM)
             
             # Create a copy of the message with the delta time
             msg_with_time = msg.copy(time=int(delta_ticks))
@@ -836,8 +836,9 @@ class VideoMIDITrigger:
         
         # Initialize MIDI file recorder
         # Create output filename from config name (e.g., abc.yaml -> abc.midi)
-        midi_filename = self.config_path.stem + '.midi'
-        self.midi_recorder = MIDIFileRecorder(midi_filename, fps=self.fps)
+        # Use with_suffix to preserve the directory path
+        midi_path = self.config_path.with_suffix('.midi')
+        self.midi_recorder = MIDIFileRecorder(str(midi_path), fps=self.fps)
         
         # Register cleanup handler to ensure MIDI file is saved on exit
         atexit.register(self._save_midi_on_exit)
@@ -864,7 +865,7 @@ class VideoMIDITrigger:
             print(f"Video: {self.video_path}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
         print(f"FPS: {self.fps}")
-        print(f"MIDI recording: Will save to {midi_filename}")
+        print(f"MIDI recording: Will save to {midi_path}")
     
     def _save_midi_on_exit(self):
         """Emergency save handler for MIDI file (called on exit)."""
@@ -1416,14 +1417,14 @@ def main():
         sys.exit(1)
     except KeyboardInterrupt:
         print("\nInterrupted by user")
-        if app:
+        if app and hasattr(app, 'cleanup'):
             app.cleanup()
         sys.exit(0)
     except Exception as e:
         print(f"Unexpected error: {e}")
         import traceback
         traceback.print_exc()
-        if app:
+        if app and hasattr(app, 'cleanup'):
             app.cleanup()
         sys.exit(1)
 
