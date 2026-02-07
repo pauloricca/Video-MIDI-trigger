@@ -40,7 +40,7 @@ This will load the `road.yaml` configuration file and automatically record MIDI 
 ### Command-Line Options
 
 ```bash
-python video-midi-trigger.py <config_name> [--no-save]
+python video-midi-trigger.py <config_name> [--no-save] [--split-midi-channels]
 ```
 
 - `config_name`: Name of the configuration file (without .yaml extension)
@@ -54,6 +54,7 @@ python video-midi-trigger.py myproject
 
 # Disable MIDI file recording - only real-time MIDI output
 python video-midi-trigger.py myproject --no-save
+python video-midi-trigger.py myproject --split-midi-channels
 ```
 
 ## Configuration
@@ -125,6 +126,20 @@ triggers:
       note: 64       # MIDI note number
       velocity: 100
       channel: 0
+
+  - name: "Fixed CC Trigger"
+    position:
+      x: 30
+      y: 70
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 200
+    midi:
+      cc: 32
+      value: 127
+      off_value: 0   # Optional: send on deactivate
+      channel: 0
   
   - name: "Difference Range"
     position:
@@ -180,7 +195,8 @@ triggers:
   - **device** (optional): Per-trigger MIDI output device name. Overrides the global `device` for this trigger.
   - **midi**: MIDI message configuration
     - **note**: MIDI note number (0-127) or note name for brightness/darkness/motion/difference (e.g. `C`, `D#4`, `Eb2`). If no octave is provided, octave 4 is assumed (so `C` = middle C = 60).
-    - **velocity**: Note velocity for brightness/darkness/motion/difference. Can be:
+      - For brightness/darkness/motion/difference, you can use either `note` + `velocity` **or** `cc` + `value`.
+    - **velocity**: Note velocity for brightness/darkness/motion/difference (note mode only). Can be:
       - **Fixed velocity**: A number between 0-127 (e.g., `velocity: 100`)
       - **Variable velocity**: A dict with min/max mappings based on detected value:
         ```yaml
@@ -190,7 +206,9 @@ triggers:
         ```
         The velocity will be interpolated between min and max based on the detected brightness/motion value.
         Values outside the range are clamped to min/max velocity.
-    - **cc**: MIDI CC number (0-127) for range and difference range
+    - **cc**: MIDI CC number (0-127) for range/difference range, or fixed CC triggers (brightness/darkness/motion/difference)
+    - **value**: Fixed CC value (0-127) for brightness/darkness/motion/difference when using `cc`
+    - **off_value** (optional): CC value sent on deactivation for fixed CC triggers
     - **channel**: MIDI channel (0-15)
 
 ### Debounce and Throttle Behavior
@@ -318,6 +336,7 @@ The application automatically records all MIDI events to a `.midi` file while pl
 2. **Video Frame-Based Timing**: Events are timestamped based on the video's frame position (not playback time), ensuring perfect sync even if playback is slow
 3. **Single Loop Recording**: For looping videos, only the first loop is recorded (subsequent loops don't add to the file)
 4. **Automatic Naming**: The MIDI file uses the same name as your YAML config (e.g., `myconfig.yaml` → `myconfig.midi`)
+5. **Optional Channel Splits**: With `--split-midi-channels`, the app writes one file per note channel and a separate CC file (e.g., `myconfig-ch-01.midi`, `myconfig-ch-02.midi`, `myconfig-cc.midi`)
 5. **Saved on Exit**: The MIDI file is automatically saved when you:
    - Press 'q' to quit
    - Press Ctrl+C to interrupt

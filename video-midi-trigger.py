@@ -197,19 +197,21 @@ class MIDIManager:
 class MIDIFileRecorder:
     """Records MIDI events to a file with video-relative timing."""
     
-    def __init__(self, output_filename, fps=30):
+    def __init__(self, output_filename, fps=30, split_midi_channels=False):
         """
         Initialize MIDI file recorder.
         
         Args:
             output_filename: Path to save MIDI file
             fps: Video frames per second (for timing calculations)
+            split_midi_channels: When True, export per-channel note files and a CC file
         """
         self.output_filename = output_filename
         self.fps = fps
         self.events = []  # List of (time_seconds, message) tuples
         self.recording = True
         self.first_loop_completed = False
+        self.split_midi_channels = split_midi_channels
         
     def start_recording(self):
         """Start recording (no-op for compatibility, timing now comes from video frames)."""
@@ -253,20 +255,17 @@ class MIDIFileRecorder:
         self.first_loop_completed = True
         print("MIDI recording: First loop completed, stopped recording.")
         
-    def save(self):
-        """Save recorded MIDI events to file."""
-        if not self.events:
-            print(f"MIDI recording: No events recorded, skipping file creation.")
-            return
-            
-        # Create MIDI file
+    def _save_events_to_file(self, events, output_filename):
+        if not events:
+            return False
+
         mid = mido.MidiFile()
         track = mido.MidiTrack()
         mid.tracks.append(track)
-        
+
         # Sort events by time
-        sorted_events = sorted(self.events, key=lambda x: x[0])
-        
+        sorted_events = sorted(events, key=lambda x: x[0])
+
         # Convert absolute times to delta times
         previous_time = 0.0
         for event_time, msg in sorted_events:
@@ -274,19 +273,69 @@ class MIDIFileRecorder:
             # mido uses 480 ticks per beat by default
             delta_time = event_time - previous_time
             delta_ticks = mido.second2tick(delta_time, mid.ticks_per_beat, 500000)  # 500000 microseconds per beat (120 BPM)
-            
+
             # Create a copy of the message with the delta time
             msg_with_time = msg.copy(time=int(delta_ticks))
             track.append(msg_with_time)
-            
+
             previous_time = event_time
-            
-        # Save to file
+
         try:
-            mid.save(self.output_filename)
-            print(f"MIDI recording: Saved to {self.output_filename} ({len(self.events)} events)")
+            mid.save(output_filename)
         except Exception as e:
             print(f"MIDI recording: Error saving file: {e}")
+            return False
+
+        return True
+
+    def _split_output_paths(self):
+        base_path = Path(self.output_filename)
+        suffix = base_path.suffix or '.midi'
+        stem = base_path.stem
+        parent = base_path.parent
+        return parent, stem, suffix
+
+    def save(self):
+        """Save recorded MIDI events to file."""
+        if not self.events:
+            print("MIDI recording: No events recorded, skipping file creation.")
+            return
+
+        if not self.split_midi_channels:
+            saved = self._save_events_to_file(self.events, self.output_filename)
+            if saved:
+                print(f"MIDI recording: Saved to {self.output_filename} ({len(self.events)} events)")
+            return
+
+        parent, stem, suffix = self._split_output_paths()
+        events_by_channel = {}
+        cc_events = []
+
+        for event_time, msg in self.events:
+            if msg.type == 'control_change':
+                cc_events.append((event_time, msg))
+            elif msg.type in ('note_on', 'note_off'):
+                events_by_channel.setdefault(msg.channel, []).append((event_time, msg))
+            elif hasattr(msg, 'channel'):
+                events_by_channel.setdefault(msg.channel, []).append((event_time, msg))
+
+        saved_any = False
+
+        for channel, events in sorted(events_by_channel.items()):
+            channel_label = f"{channel + 1:02d}"
+            output_filename = str(parent / f"{stem}-ch-{channel_label}{suffix}")
+            if self._save_events_to_file(events, output_filename):
+                print(f"MIDI recording: Saved to {output_filename} ({len(events)} events)")
+                saved_any = True
+
+        if cc_events:
+            cc_filename = str(parent / f"{stem}-cc{suffix}")
+            if self._save_events_to_file(cc_events, cc_filename):
+                print(f"MIDI recording: Saved to {cc_filename} ({len(cc_events)} events)")
+                saved_any = True
+
+        if not saved_any:
+            print("MIDI recording: No split files created (no matching events).")
 
 
 class Trigger:
@@ -378,66 +427,99 @@ class Trigger:
         
         if self.trigger_type in ('brightness', 'darkness', 'motion', 'difference'):
             note = self.midi_config.get('note')
-            velocity_config = self.midi_config.get('velocity', 100)
-            if note is None:
-                raise ValueError(f"Missing MIDI note for trigger '{self.name}'")
-            note = parse_midi_note(note)
-            self.midi_config['note'] = note
-            if not isinstance(note, (int, float)):
-                raise ValueError(f"MIDI note must be numeric, got {type(note)} for trigger '{self.name}'")
-            if not (0 <= note <= 127):
-                raise ValueError(f"MIDI note must be between 0 and 127, got {note} for trigger '{self.name}'")
-            
-            # Validate velocity - can be a number or a dict with min/max
-            if isinstance(velocity_config, dict):
-                # Variable velocity mode
-                if 'min' not in velocity_config or 'max' not in velocity_config:
-                    raise ValueError(f"Variable velocity must have 'min' and 'max' for trigger '{self.name}'")
+            cc = self.midi_config.get('cc')
+            value = self.midi_config.get('value')
+
+            has_note = note is not None
+            has_cc = cc is not None or value is not None
+
+            if has_note and has_cc:
+                raise ValueError(
+                    f"Trigger '{self.name}' cannot include both MIDI note and CC/value. "
+                    f"Use one or the other."
+                )
+
+            if has_note:
+                self.midi_mode = 'note'
+                velocity_config = self.midi_config.get('velocity', 100)
+                note = parse_midi_note(note)
+                self.midi_config['note'] = note
+                if not isinstance(note, (int, float)):
+                    raise ValueError(f"MIDI note must be numeric, got {type(note)} for trigger '{self.name}'")
+                if not (0 <= note <= 127):
+                    raise ValueError(f"MIDI note must be between 0 and 127, got {note} for trigger '{self.name}'")
                 
-                vel_min = velocity_config['min']
-                vel_max = velocity_config['max']
-                
-                if not isinstance(vel_min, (list, tuple)) or len(vel_min) != 2:
-                    raise ValueError(f"Velocity min must be [detected_value, velocity] for trigger '{self.name}'")
-                if not isinstance(vel_max, (list, tuple)) or len(vel_max) != 2:
-                    raise ValueError(f"Velocity max must be [detected_value, velocity] for trigger '{self.name}'")
-                
-                # Validate detected values are numeric
-                if not isinstance(vel_min[0], (int, float)):
-                    raise ValueError(f"Velocity min detected value must be numeric, got {type(vel_min[0])} for trigger '{self.name}'")
-                if not isinstance(vel_max[0], (int, float)):
-                    raise ValueError(f"Velocity max detected value must be numeric, got {type(vel_max[0])} for trigger '{self.name}'")
-                
-                # Validate velocity values are in range
-                if not (0 <= vel_min[1] <= 127):
-                    raise ValueError(f"Velocity min value must be between 0 and 127, got {vel_min[1]} for trigger '{self.name}'")
-                if not (0 <= vel_max[1] <= 127):
-                    raise ValueError(f"Velocity max value must be between 0 and 127, got {vel_max[1]} for trigger '{self.name}'")
-                
-                # Warn if detected value range is unusual (min >= max)
-                if vel_min[0] >= vel_max[0]:
-                    print(f"Warning: Velocity min detected value ({vel_min[0]}) >= max detected value ({vel_max[0]}) for trigger '{self.name}'")
-                
-                # Store variable velocity configuration
-                self.velocity_mode = 'variable'
-                self.velocity_min_detected = vel_min[0]
-                self.velocity_min_value = vel_min[1]
-                self.velocity_max_detected = vel_max[0]
-                self.velocity_max_value = vel_max[1]
+                # Validate velocity - can be a number or a dict with min/max
+                if isinstance(velocity_config, dict):
+                    # Variable velocity mode
+                    if 'min' not in velocity_config or 'max' not in velocity_config:
+                        raise ValueError(f"Variable velocity must have 'min' and 'max' for trigger '{self.name}'")
+                    
+                    vel_min = velocity_config['min']
+                    vel_max = velocity_config['max']
+                    
+                    if not isinstance(vel_min, (list, tuple)) or len(vel_min) != 2:
+                        raise ValueError(f"Velocity min must be [detected_value, velocity] for trigger '{self.name}'")
+                    if not isinstance(vel_max, (list, tuple)) or len(vel_max) != 2:
+                        raise ValueError(f"Velocity max must be [detected_value, velocity] for trigger '{self.name}'")
+                    
+                    # Validate detected values are numeric
+                    if not isinstance(vel_min[0], (int, float)):
+                        raise ValueError(f"Velocity min detected value must be numeric, got {type(vel_min[0])} for trigger '{self.name}'")
+                    if not isinstance(vel_max[0], (int, float)):
+                        raise ValueError(f"Velocity max detected value must be numeric, got {type(vel_max[0])} for trigger '{self.name}'")
+                    
+                    # Validate velocity values are in range
+                    if not (0 <= vel_min[1] <= 127):
+                        raise ValueError(f"Velocity min value must be between 0 and 127, got {vel_min[1]} for trigger '{self.name}'")
+                    if not (0 <= vel_max[1] <= 127):
+                        raise ValueError(f"Velocity max value must be between 0 and 127, got {vel_max[1]} for trigger '{self.name}'")
+                    
+                    # Warn if detected value range is unusual (min >= max)
+                    if vel_min[0] >= vel_max[0]:
+                        print(f"Warning: Velocity min detected value ({vel_min[0]}) >= max detected value ({vel_max[0]}) for trigger '{self.name}'")
+                    
+                    # Store variable velocity configuration
+                    self.velocity_mode = 'variable'
+                    self.velocity_min_detected = vel_min[0]
+                    self.velocity_min_value = vel_min[1]
+                    self.velocity_max_detected = vel_max[0]
+                    self.velocity_max_value = vel_max[1]
+                else:
+                    # Fixed velocity mode
+                    if not isinstance(velocity_config, (int, float)):
+                        raise ValueError(f"MIDI velocity must be numeric, got {type(velocity_config)} for trigger '{self.name}'")
+                    if not (0 <= velocity_config <= 127):
+                        raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity_config} for trigger '{self.name}'")
+                    self.velocity_mode = 'fixed'
+                    self.velocity_fixed = velocity_config
+            elif has_cc:
+                self.midi_mode = 'cc'
+                if cc is None:
+                    raise ValueError(f"Missing MIDI CC for trigger '{self.name}'")
+                if not (0 <= cc <= 127):
+                    raise ValueError(f"MIDI CC must be between 0 and 127, got {cc} for trigger '{self.name}'")
+                if value is None:
+                    raise ValueError(f"Missing MIDI CC value for trigger '{self.name}'")
+                if not isinstance(value, (int, float)):
+                    raise ValueError(f"MIDI CC value must be numeric, got {type(value)} for trigger '{self.name}'")
+                if not (0 <= value <= 127):
+                    raise ValueError(f"MIDI CC value must be between 0 and 127, got {value} for trigger '{self.name}'")
+                off_value = self.midi_config.get('off_value')
+                if off_value is not None:
+                    if not isinstance(off_value, (int, float)):
+                        raise ValueError(f"MIDI CC off_value must be numeric, got {type(off_value)} for trigger '{self.name}'")
+                    if not (0 <= off_value <= 127):
+                        raise ValueError(f"MIDI CC off_value must be between 0 and 127, got {off_value} for trigger '{self.name}'")
             else:
-                # Fixed velocity mode
-                if not isinstance(velocity_config, (int, float)):
-                    raise ValueError(f"MIDI velocity must be numeric, got {type(velocity_config)} for trigger '{self.name}'")
-                if not (0 <= velocity_config <= 127):
-                    raise ValueError(f"MIDI velocity must be between 0 and 127, got {velocity_config} for trigger '{self.name}'")
-                self.velocity_mode = 'fixed'
-                self.velocity_fixed = velocity_config
+                raise ValueError(f"Missing MIDI note or CC/value for trigger '{self.name}'")
         elif self.trigger_type in ('range', 'difference range'):
             cc = self.midi_config.get('cc')
             if cc is None:
                 raise ValueError(f"Missing MIDI CC for trigger '{self.name}'")
             if not (0 <= cc <= 127):
                 raise ValueError(f"MIDI CC must be between 0 and 127, got {cc} for trigger '{self.name}'")
+            self.midi_mode = 'cc_range'
         
         self.active = False
         self.last_cc_value = None
@@ -801,7 +883,7 @@ class VideoMIDITrigger:
     # Coordinate precision for trigger creation (decimal places)
     COORDINATE_PRECISION = 1
     
-    def __init__(self, config_name, save_midi=True):
+    def __init__(self, config_name, save_midi=True, split_midi_channels=False):
         self.config_path = Path(config_name)
         if not self.config_path.suffix:
             self.config_path = Path(f"{config_name}.yaml")
@@ -809,8 +891,9 @@ class VideoMIDITrigger:
         if not self.config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
         
-        # MIDI file saving flag
+        # MIDI file saving flags
         self.save_midi = save_midi
+        self.split_midi_channels = split_midi_channels
         
         # Load configuration and initialize
         self.config_mtime = None
@@ -848,7 +931,11 @@ class VideoMIDITrigger:
         # Use with_suffix to preserve the directory path
         midi_path = self.config_path.with_suffix('.midi')
         if self.save_midi:
-            self.midi_recorder = MIDIFileRecorder(str(midi_path), fps=self.fps)
+            self.midi_recorder = MIDIFileRecorder(
+                str(midi_path),
+                fps=self.fps,
+                split_midi_channels=self.split_midi_channels
+            )
             
             # Register cleanup handler to ensure MIDI file is saved on exit
             atexit.register(self._save_midi_on_exit)
@@ -880,7 +967,10 @@ class VideoMIDITrigger:
         if not self.use_camera and self.video_duration_s is not None:
             print(f"Length: {self.video_duration_s:.3f}s ({self.frame_count} frames)")
         if self.save_midi:
-            print(f"MIDI recording: Will save to {midi_path}")
+            if self.split_midi_channels:
+                print(f"MIDI recording: Will save split files based on {midi_path}")
+            else:
+                print(f"MIDI recording: Will save to {midi_path}")
         else:
             print("MIDI recording: Disabled (--no-save)")
     
@@ -1121,12 +1211,20 @@ class VideoMIDITrigger:
                         if can_activate:
                             # Trigger activated
                             trigger.active = True
-                            note = trigger.midi_config['note']
-                            velocity = trigger.get_velocity()
-                            channel = trigger.midi_config['channel']
-                            self.midi_manager.send_note_on(trigger.device_name, note, velocity, channel)
-                            if PRINT_MIDI_SENDS:
-                                print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
+                            if trigger.midi_mode == 'note':
+                                note = trigger.midi_config['note']
+                                velocity = trigger.get_velocity()
+                                channel = trigger.midi_config['channel']
+                                self.midi_manager.send_note_on(trigger.device_name, note, velocity, channel)
+                                if PRINT_MIDI_SENDS:
+                                    print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
+                            else:
+                                cc = trigger.midi_config['cc']
+                                value = trigger.midi_config['value']
+                                channel = trigger.midi_config.get('channel', 0)
+                                self.midi_manager.send_cc(trigger.device_name, cc, value, channel)
+                                if PRINT_MIDI_SENDS:
+                                    print(f"✓ {trigger.name}: CC (CC: {cc}, Value: {value})")
                 
                 else:
                     # Trigger condition is not met
@@ -1145,11 +1243,20 @@ class VideoMIDITrigger:
                             # Trigger deactivated
                             trigger.active = False
                             trigger.last_deactivated_time = current_time
-                            note = trigger.midi_config['note']
-                            channel = trigger.midi_config['channel']
-                            self.midi_manager.send_note_off(trigger.device_name, note, channel)
-                            if PRINT_MIDI_SENDS:
-                                print(f"✗ {trigger.name}: Note OFF (Note: {note})")
+                            if trigger.midi_mode == 'note':
+                                note = trigger.midi_config['note']
+                                channel = trigger.midi_config['channel']
+                                self.midi_manager.send_note_off(trigger.device_name, note, channel)
+                                if PRINT_MIDI_SENDS:
+                                    print(f"✗ {trigger.name}: Note OFF (Note: {note})")
+                            else:
+                                off_value = trigger.midi_config.get('off_value')
+                                if off_value is not None:
+                                    cc = trigger.midi_config['cc']
+                                    channel = trigger.midi_config.get('channel', 0)
+                                    self.midi_manager.send_cc(trigger.device_name, cc, off_value, channel)
+                                    if PRINT_MIDI_SENDS:
+                                        print(f"✗ {trigger.name}: CC OFF (CC: {cc}, Value: {off_value})")
             
             # Draw trigger area on frame
             if self.show_triggers:
@@ -1192,11 +1299,18 @@ class VideoMIDITrigger:
     def reset_triggers(self):
         """Reset all triggers and send MIDI Note Off messages."""
         for trigger in self.triggers:
-            if trigger.active and 'note' in trigger.midi_config:
+            if trigger.active:
                 trigger.active = False
-                note = trigger.midi_config['note']
-                channel = trigger.midi_config['channel']
-                self.midi_manager.send_note_off(trigger.device_name, note, channel)
+                if trigger.midi_mode == 'note' and 'note' in trigger.midi_config:
+                    note = trigger.midi_config['note']
+                    channel = trigger.midi_config['channel']
+                    self.midi_manager.send_note_off(trigger.device_name, note, channel)
+                elif trigger.midi_mode == 'cc':
+                    off_value = trigger.midi_config.get('off_value')
+                    if off_value is not None:
+                        cc = trigger.midi_config['cc']
+                        channel = trigger.midi_config.get('channel', 0)
+                        self.midi_manager.send_cc(trigger.device_name, cc, off_value, channel)
             # Reset motion detection state
             if trigger.trigger_type == 'motion':
                 trigger.previous_roi = None
@@ -1359,10 +1473,17 @@ class VideoMIDITrigger:
         
         # Send note off for any active triggers
         for trigger in self.triggers:
-            if trigger.active and 'note' in trigger.midi_config:
-                note = trigger.midi_config['note']
-                channel = trigger.midi_config['channel']
-                self.midi_manager.send_note_off(trigger.device_name, note, channel)
+            if trigger.active:
+                if trigger.midi_mode == 'note' and 'note' in trigger.midi_config:
+                    note = trigger.midi_config['note']
+                    channel = trigger.midi_config['channel']
+                    self.midi_manager.send_note_off(trigger.device_name, note, channel)
+                elif trigger.midi_mode == 'cc':
+                    off_value = trigger.midi_config.get('off_value')
+                    if off_value is not None:
+                        cc = trigger.midi_config['cc']
+                        channel = trigger.midi_config.get('channel', 0)
+                        self.midi_manager.send_cc(trigger.device_name, cc, off_value, channel)
         
         # Save MIDI file
         if self.midi_recorder:
@@ -1460,15 +1581,23 @@ def main():
     parser.add_argument('--no-save', 
                        action='store_true',
                        help='Disable MIDI file recording (only send real-time MIDI)')
+    parser.add_argument('--split-midi-channels',
+                       action='store_true',
+                       help='Export separate MIDI files per channel and a CC-only file')
     
     args = parser.parse_args()
     
     config_name = args.config_name
     save_midi = not args.no_save
+    split_midi_channels = args.split_midi_channels
     app = None
     
     try:
-        app = VideoMIDITrigger(config_name, save_midi=save_midi)
+        app = VideoMIDITrigger(
+            config_name,
+            save_midi=save_midi,
+            split_midi_channels=split_midi_channels
+        )
         app.run()
     except FileNotFoundError as e:
         print(f"File not found: {e}")
