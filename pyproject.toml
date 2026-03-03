@@ -1,0 +1,14 @@
+[project]
+name = "video-midi-trigger"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9.18"
+dependencies = [
+    "mido>=1.2.0",
+    "numpy>=1.19.0,<2",
+    "opencv-python>=4.5.0,<4.9",
+    "python-rtmidi>=1.4.0",
+    "pyyaml>=5.4.0",
+    "ruamel-yaml>=0.17.0",
+]
