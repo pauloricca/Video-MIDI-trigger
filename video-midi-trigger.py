@@ -525,6 +525,7 @@ class Trigger:
         self.last_cc_value = None
         self.range_level = 0.0
         self.roi_coords = None  # Will be set when frame size is known
+        self._base_roi_coords = None  # Original ROI coords before movement offset
         self.shape_mask = None  # Will be set when frame size is known if shape is provided
         self.previous_roi = None  # For motion detection
         self.first_roi = None  # For difference detection
@@ -533,6 +534,19 @@ class Trigger:
         # Timing state for debounce and throttle
         self.became_invalid_time = None  # Time when trigger condition became false
         self.last_deactivated_time = None  # Time when trigger was actually deactivated (sent Note OFF)
+
+        # Movement state
+        movement_config = config.get('movement')
+        if movement_config is not None:
+            self.movement = {
+                'direction': movement_config.get('direction', [0, 0]),
+                'speed': float(movement_config.get('speed', 0)),
+                'duration': float(movement_config.get('duration', 0)),
+            }
+        else:
+            self.movement = None
+        self._movement_start_time = None
+        self._movement_px_offset = (0.0, 0.0)
 
     def _avg_brightness(self, frame, gray_frame=None):
         x, y, w, h = self.roi_coords
@@ -633,7 +647,7 @@ class Trigger:
             self.roi_coords = (x, y, w, h)
             # No shape mask for position-based triggers
             self.shape_mask = None
-            
+
         else:
             # Use shape to define ROI - calculate bounding box from shape points
             # Convert shape points from percentages to pixel coordinates
@@ -682,7 +696,40 @@ class Trigger:
             self.roi_coords = (x, y, w, h)
             # Create shape mask for shape-based triggers
             self.shape_mask = self._create_shape_mask(frame_height, frame_width)
-    
+
+        # Store base coords and reset movement offset
+        self._base_roi_coords = self.roi_coords
+        self._movement_px_offset = (0.0, 0.0)
+
+    def update_movement(self, current_time, frame_width, frame_height):
+        """Update trigger position based on movement configuration."""
+        if self.movement is None or self._base_roi_coords is None:
+            return
+        direction = self.movement['direction']
+        speed = self.movement['speed']
+        duration = self.movement['duration']
+        if speed == 0 or (direction[0] == 0 and direction[1] == 0):
+            return
+        if self._movement_start_time is None:
+            self._movement_start_time = current_time
+        elapsed = current_time - self._movement_start_time
+        if duration > 0:
+            elapsed = elapsed % duration
+        dx, dy = float(direction[0]), float(direction[1])
+        mag = (dx * dx + dy * dy) ** 0.5
+        if mag > 0:
+            dx /= mag
+            dy /= mag
+        offset_x = dx * speed * elapsed
+        offset_y = dy * speed * elapsed
+        self._movement_px_offset = (offset_x, offset_y)
+        bx, by, bw, bh = self._base_roi_coords
+        new_x = int(round(bx + offset_x))
+        new_y = int(round(by + offset_y))
+        new_x = max(0, min(frame_width - bw, new_x))
+        new_y = max(0, min(frame_height - bh, new_y))
+        self.roi_coords = (new_x, new_y, bw, bh)
+
     def check_trigger(self, frame, gray_frame=None):
         """Check if the trigger condition is met."""
         if self.roi_coords is None:
@@ -844,12 +891,14 @@ class Trigger:
         
         # Draw shape if defined, otherwise draw rectangle
         if self.shape is not None:
-            # Convert shape points from percentages to pixel coordinates
+            # Convert shape points from percentages to pixel coordinates, applying movement offset
             frame_height, frame_width = frame.shape[:2]
+            off_x = int(round(self._movement_px_offset[0]))
+            off_y = int(round(self._movement_px_offset[1]))
             shape_pixels = []
             for point in self.shape:
-                px = int(frame_width * point[0] / 100)
-                py = int(frame_height * point[1] / 100)
+                px = int(frame_width * point[0] / 100) + off_x
+                py = int(frame_height * point[1] / 100) + off_y
                 shape_pixels.append((px, py))
             
             if len(shape_pixels) == 1:
@@ -901,7 +950,9 @@ class VideoMIDITrigger:
         self.triggers = []
         self.target_fps = None
         self.use_camera = False
+        self.use_image = False
         self.video_path = None
+        self.image_path = None
         self.camera_name = None
         self.camera_index = None
         self.available_cameras = []
@@ -960,6 +1011,8 @@ class VideoMIDITrigger:
                 print(f"Video: {self.camera_name}")
             else:
                 print("Video: camera")
+        elif self.use_image:
+            print(f"Image: {self.image_path}")
         else:
             print(f"Video: {self.video_path}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
@@ -986,17 +1039,24 @@ class VideoMIDITrigger:
         
         source = self.config['source']
         self.use_camera = False
+        self.use_image = False
         self.camera_name = None
         self.camera_index = None
         self.video_path = None
+        self.image_path = None
         self.mirror = bool(self.config.get('mirror', False))
         self.scale = float(self.config.get('scale', 1.0))
         if self.scale <= 0:
             raise ValueError(f"Scale must be > 0, got {self.scale}")
 
+        IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
+
         if isinstance(source, str):
             if source.lower() == "camera":
                 self.use_camera = True
+            elif os.path.exists(source) and Path(source).suffix.lower() in IMAGE_EXTENSIONS:
+                self.use_image = True
+                self.image_path = source
             elif os.path.exists(source):
                 self.video_path = source
             else:
@@ -1006,7 +1066,7 @@ class VideoMIDITrigger:
         else:
             self.video_path = source
 
-        if not self.use_camera and self.video_path and not os.path.exists(self.video_path):
+        if not self.use_camera and not self.use_image and self.video_path and not os.path.exists(self.video_path):
             raise FileNotFoundError(f"Video file not found: {self.video_path}")
         
         # Extract global defaults for triggers
@@ -1025,6 +1085,24 @@ class VideoMIDITrigger:
                 self.midi_manager.get_controller(trigger.device_name)
 
     def _init_capture(self):
+        self.cap = None
+        self._image_frame = None
+        if self.use_image:
+            img = cv2.imread(self.image_path)
+            if img is None:
+                raise RuntimeError(f"Could not load image: {self.image_path}")
+            self._image_frame = img
+            self.target_fps = None
+            self.frame_width = img.shape[1]
+            self.frame_height = img.shape[0]
+            self.fps = 30  # synthetic FPS for image sources
+            self.frame_count = 0
+            if self.scale != 1.0:
+                self.frame_width = max(1, int(round(self.frame_width * self.scale)))
+                self.frame_height = max(1, int(round(self.frame_height * self.scale)))
+                interp = cv2.INTER_AREA if self.scale < 1.0 else cv2.INTER_LINEAR
+                self._image_frame = cv2.resize(self._image_frame, (self.frame_width, self.frame_height), interpolation=interp)
+            return
         if self.use_camera:
             self.available_cameras = self._list_cameras()
             self._print_cameras(self.available_cameras)
@@ -1034,7 +1112,7 @@ class VideoMIDITrigger:
             self.cap = cv2.VideoCapture(self.camera_index)
         else:
             self.cap = cv2.VideoCapture(self.video_path)
-        if not self.cap.isOpened():
+        if self.cap is not None and not self.cap.isOpened():
             if self.use_camera:
                 raise RuntimeError("Could not open camera.")
             raise RuntimeError(f"Could not open video: {self.video_path}")
@@ -1185,6 +1263,7 @@ class VideoMIDITrigger:
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         for trigger in self.triggers:
+            trigger.update_movement(current_time, self.frame_width, self.frame_height)
             if trigger.trigger_type in ('range', 'difference range'):
                 value = trigger.check_trigger(frame, gray_frame=gray_frame)
                 if value != trigger.last_cc_value:
@@ -1353,13 +1432,18 @@ class VideoMIDITrigger:
         # Start MIDI recording (if enabled)
         if self.midi_recorder:
             self.midi_recorder.start_recording()
-        if not self.use_camera:
+        if not self.use_camera and not self.use_image:
             self.loop_start_time = time.perf_counter()
         
         try:
             while True:
                 loop_start = time.perf_counter()
-                ret, frame = self.cap.read()
+
+                if self.use_image:
+                    frame = self._image_frame.copy()
+                    ret = True
+                else:
+                    ret, frame = self.cap.read()
                 
                 if not ret:
                     # Video ended, reset triggers and restart from beginning
@@ -1379,9 +1463,12 @@ class VideoMIDITrigger:
                         self.loop_start_time = time.perf_counter()
                     continue
 
-                # Get current video time based on frame position (not playback time)
-                # This ensures MIDI timing matches video timing exactly
-                if not self.use_camera:
+                # Get current time for MIDI recording
+                if self.use_image:
+                    if self._camera_start_time is None:
+                        self._camera_start_time = time.time()
+                    video_time = time.time() - self._camera_start_time
+                elif not self.use_camera:
                     current_frame = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
                     if self.fps <= 0:
                         print(f"Warning: Invalid FPS ({self.fps}), defaulting to 30 for timing calculations")
@@ -1420,8 +1507,9 @@ class VideoMIDITrigger:
                     print("Restarting video and resetting first frame...")
                     self.reset_triggers()
                     self.reset_first_frame()
-                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    if not self.use_camera:
+                    if self.cap is not None:
+                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if not self.use_camera and not self.use_image:
                         self.loop_start_time = time.perf_counter()
                 elif key == ord('h'):
                     self.show_triggers = not self.show_triggers
@@ -1489,7 +1577,8 @@ class VideoMIDITrigger:
         if self.midi_recorder:
             self.midi_recorder.save()
         
-        self.cap.release()
+        if self.cap is not None:
+            self.cap.release()
         cv2.destroyAllWindows()
         self.midi_manager.close_all()
         print("Done.")

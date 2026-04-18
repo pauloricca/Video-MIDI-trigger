@@ -89,3 +89,21 @@ triggers:
     midi:
       cc: 21
       channel: 0
+
+  # Moving trigger - brightness trigger that sweeps left to right and loops every 4 seconds
+  - name: "Moving Brightness"
+    position:
+      x: 10
+      y: 45
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 150
+    movement:
+      direction: [1, 0]   # Move right (normalized vector)
+      speed: 80           # Pixels per second
+      duration: 4         # Loop every 4 seconds
+    midi:
+      note: 67  # G
+      velocity: 100
+      channel: 0

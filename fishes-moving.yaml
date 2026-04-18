@@ -1,0 +1,22 @@
+source: "fishes.jpg"
+
+triggers:
+  # A vertical line that sweeps left to right across the image.
+  # It triggers when it passes over the bright silver fish on the right side.
+  # The line spans the full height of the image (y: 0 to y: 100).
+  # duration: 6 seconds per full sweep, matching roughly the width of
+  # the fish school so timing feels natural.
+  - name: "Fish Scanner"
+    shape:
+      - [0, 0]
+      - [0, 100]
+    type: "brightness"
+    threshold: 40
+    movement:
+      direction: [1, 0]   # sweep right
+      speed: 130          # pixels per second (adjust to your image resolution)
+      duration: 6         # loop every 6 seconds
+    midi:
+      note: 60    # C4
+      velocity: 100
+      channel: 0
