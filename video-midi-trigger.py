@@ -875,6 +875,7 @@ class Trigger:
             return
         
         x, y, w, h = self.roi_coords
+        label_margin = 10
         
         # Choose color based on active state
         color = self.active_color if self.active else self.inactive_color
@@ -913,7 +914,11 @@ class Trigger:
                 cv2.polylines(frame, [points], isClosed=True, color=color, thickness=2)
             
             # Draw label near the first point of the shape
-            label_pos = (shape_pixels[0][0], shape_pixels[0][1] - 5)
+            label_y = shape_pixels[0][1] - label_margin
+            if label_y < 12:
+                label_y = shape_pixels[0][1] + label_margin
+            label_x = shape_pixels[0][0] + label_margin
+            label_pos = (label_x, label_y)
             cv2.putText(frame, self.name, label_pos, cv2.FONT_HERSHEY_SIMPLEX, 
                         0.5, color, 1, cv2.LINE_AA)
         else:
@@ -922,7 +927,11 @@ class Trigger:
             
             # Draw label
             label = f"{self.name}"
-            cv2.putText(frame, label, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 
+            label_y = y - label_margin
+            if label_y < 12:
+                label_y = y + label_margin
+            label_x = x + label_margin
+            cv2.putText(frame, label, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 
                         0.5, color, 1, cv2.LINE_AA)
 
 
@@ -1076,8 +1085,45 @@ class VideoMIDITrigger:
             'colour': self.config.get('colour')
         }
         
+        # Expand multi-note line triggers into individual segment triggers
+        expanded = []
+        for t in self.config['triggers']:
+            notes = t.get('midi', {}).get('note')
+            shape = t.get('shape')
+            # Unwrap single-element note lists
+            if isinstance(notes, list) and len(notes) == 1:
+                t = copy.deepcopy(t)
+                t['midi']['note'] = notes[0]
+                notes = notes[0]
+            if (
+                isinstance(notes, list)
+                and len(notes) > 1
+                and shape is not None
+                and len(shape) == 2
+            ):
+                p1, p2 = shape
+                n = len(notes)
+                for i, note in enumerate(notes):
+                    frac_start = i / n
+                    frac_end = (i + 1) / n
+                    seg_p1 = [
+                        p1[0] + (p2[0] - p1[0]) * frac_start,
+                        p1[1] + (p2[1] - p1[1]) * frac_start,
+                    ]
+                    seg_p2 = [
+                        p1[0] + (p2[0] - p1[0]) * frac_end,
+                        p1[1] + (p2[1] - p1[1]) * frac_end,
+                    ]
+                    sub = copy.deepcopy(t)
+                    sub['name'] = f"{t.get('name', 'Trigger')} [{i + 1}]"
+                    sub['shape'] = [seg_p1, seg_p2]
+                    sub['midi']['note'] = note
+                    expanded.append(sub)
+            else:
+                expanded.append(t)
+
         # Rebuild triggers
-        self.triggers = [Trigger(t, global_defaults=global_defaults) for t in self.config['triggers']]
+        self.triggers = [Trigger(t, global_defaults=global_defaults) for t in expanded]
 
     def _ensure_trigger_devices(self):
         for trigger in self.triggers:

@@ -11,12 +11,12 @@ triggers:
       - [0, 0]
       - [0, 100]
     type: "brightness"
-    threshold: 40
+    threshold: 45
     movement:
       direction: [1, 0]   # sweep right
       speed: 130          # pixels per second (adjust to your image resolution)
       duration: 6         # loop every 6 seconds
     midi:
-      note: 60    # C4
+      note: [60, 62, 64, 66, 69, 71]    # C4
       velocity: 100
       channel: 0
