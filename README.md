@@ -19,11 +19,8 @@ A Python application that triggers MIDI messages based on visual events in a vid
 2. Install the required dependencies:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pyenv local 3.9.18
-pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+uv python install 3.10
+uv sync --python 3.10
 ```
 
 ## Usage
@@ -31,8 +28,7 @@ pip install -r requirements.txt
 Run the application with a configuration file name as an argument:
 
 ```bash
-source .venv/bin/activate
-python video-midi-trigger.py road
+uv run python video-midi-trigger.py road
 ```
 
 This will load the `road.yaml` configuration file and automatically record MIDI events to `road.midi`.
@@ -40,7 +36,7 @@ This will load the `road.yaml` configuration file and automatically record MIDI 
 ### Command-Line Options
 
 ```bash
-python video-midi-trigger.py <config_name> [--no-save] [--split-midi-channels]
+uv run python video-midi-trigger.py <config_name> [--no-save] [--split-midi-channels]
 ```
 
 - `config_name`: Name of the configuration file (without .yaml extension)
@@ -50,11 +46,11 @@ python video-midi-trigger.py <config_name> [--no-save] [--split-midi-channels]
 
 ```bash
 # Normal usage - records MIDI to file
-python video-midi-trigger.py myproject
+uv run python video-midi-trigger.py myproject
 
 # Disable MIDI file recording - only real-time MIDI output
-python video-midi-trigger.py myproject --no-save
-python video-midi-trigger.py myproject --split-midi-channels
+uv run python video-midi-trigger.py myproject --no-save
+uv run python video-midi-trigger.py myproject --split-midi-channels
 ```
 
 ## Configuration
