@@ -157,16 +157,20 @@ triggers:
 
 ### Configuration Parameters
 
-- **source**: Path to the video file (relative or absolute), `"camera"` to use the first available camera, or a camera name printed at startup (e.g. `FaceTime HD Camera`)
+- **source**: Path to a video file (relative or absolute), a direct video stream URL (`http/https/rtsp/rtmp`), a YouTube URL (`youtube.com` or `youtu.be`), `"camera"` to use the first available camera, or a camera name printed at startup (e.g. `FaceTime HD Camera`)
+- **YouTube URLs**: Downloaded automatically via `yt-dlp` to a persistent local cache file (`.youtube-cache/<video_id>.mp4`) and reused on later runs.
+- **youtube_cache_dir** (optional): Directory for cached YouTube downloads (default `.youtube-cache`, relative to the YAML file directory).
 - **camera** (optional): Settings applied when `source: "camera"`
   - **width**: Camera capture width (default 640)
   - **height**: Camera capture height (default 480)
   - **fps**: Target camera FPS (default 30)
 - **mirror** (optional): Mirror the camera image horizontally (default false). Only applies when using a camera source.
 - **scale** (optional): Scale the source frame by a ratio (default 1.0). Applies to camera or video sources.
+- **overlay** (optional): RGBA overlay applied across the whole video/image source before triggers are drawn, e.g. `[0, 80, 120, 100]`. RGB uses standard RGB ordering; alpha can be `0-255` or `0.0-1.0`.
 - **device** (optional): Global default MIDI output device name. Used when a trigger does not specify its own device.
 - **debounce** (optional): Global default debounce time in seconds (default 0). Prevents triggers from deactivating too quickly.
 - **throttle** (optional): Global default throttle time in seconds (default 0). Prevents triggers from reactivating too quickly.
+- **colour** / **color** (optional): Global default trigger display color in RGB. Accepts either `[r, g, b]` or `[[inactive_r, inactive_g, inactive_b], [active_r, active_g, active_b]]`.
 - **Live reload**: The app watches the YAML file and reloads trigger values on change. Changing the global `device` or `source` requires a restart to take effect.
 - **triggers**: List of trigger definitions
   - **name**: Descriptive name for the trigger
@@ -192,6 +196,7 @@ triggers:
   - **min/max**: Brightness range (0-255) for range triggers, or difference range (0-255) for difference range triggers
   - **debounce** (optional): Per-trigger debounce time in seconds. When a trigger becomes invalid, it will wait this duration before sending Note OFF. Overrides global default.
   - **throttle** (optional): Per-trigger throttle time in seconds. After deactivation, the trigger will wait this duration before it can reactivate. Overrides global default.
+  - **colour** / **color** (optional): Per-trigger display color in RGB. Accepts either `[r, g, b]` (inactive is auto-dimmed), or `[[inactive_r, inactive_g, inactive_b], [active_r, active_g, active_b]]` for explicit inactive/active colors.
   - **device** (optional): Per-trigger MIDI output device name. Overrides the global `device` for this trigger.
   - **midi**: MIDI message configuration
     - **note**: MIDI note number (0-127) or note name for brightness/darkness/motion/difference (e.g. `C`, `D#4`, `Eb2`). If no octave is provided, octave 4 is assumed (so `C` = middle C = 60).

@@ -18,6 +18,7 @@ import re
 import copy
 import atexit
 import argparse
+from urllib.parse import urlparse
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 import mido
@@ -62,6 +63,18 @@ def parse_midi_note(note_value, default_octave=4):
 
 
 def parse_colour(colour_value):
+    def _parse_rgb_triplet(values, error_context):
+        if len(values) != 3:
+            raise ValueError(f"Colour must have 3 values, got {error_context}")
+        try:
+            rgb = tuple(int(v) for v in values)
+        except (TypeError, ValueError):
+            raise ValueError(f"Colour values must be integers, got {error_context}")
+        for v in rgb:
+            if not (0 <= v <= 255):
+                raise ValueError(f"Colour values must be between 0 and 255, got {rgb}")
+        return rgb
+
     if colour_value is None:
         return None
     if isinstance(colour_value, str):
@@ -70,19 +83,79 @@ def parse_colour(colour_value):
             raise ValueError(
                 f"Colour must be RGB values like '255,255,255', got '{colour_value}'"
             )
-        colour_value = parts
+        active_rgb = _parse_rgb_triplet(parts, colour_value)
+        return {
+            "inactive_rgb": None,
+            "active_rgb": active_rgb,
+        }
     if isinstance(colour_value, (list, tuple)):
-        if len(colour_value) != 3:
-            raise ValueError(f"Colour must have 3 values, got {colour_value}")
-        try:
-            rgb = tuple(int(v) for v in colour_value)
-        except (TypeError, ValueError):
-            raise ValueError(f"Colour values must be integers, got {colour_value}")
-        for v in rgb:
-            if not (0 <= v <= 255):
-                raise ValueError(f"Colour values must be between 0 and 255, got {rgb}")
-        return rgb
-    raise ValueError(f"Colour must be a list, tuple, or 'r,g,b' string, got {type(colour_value)}")
+        # Single RGB value: [r, g, b]
+        if len(colour_value) == 3 and not isinstance(colour_value[0], (list, tuple)):
+            active_rgb = _parse_rgb_triplet(colour_value, colour_value)
+            return {
+                "inactive_rgb": None,
+                "active_rgb": active_rgb,
+            }
+
+        # Pair of RGB values: [[inactive_r, inactive_g, inactive_b], [active_r, active_g, active_b]]
+        if len(colour_value) == 2:
+            inactive_rgb = _parse_rgb_triplet(colour_value[0], colour_value[0])
+            active_rgb = _parse_rgb_triplet(colour_value[1], colour_value[1])
+            return {
+                "inactive_rgb": inactive_rgb,
+                "active_rgb": active_rgb,
+            }
+
+    raise ValueError(
+        "Colour must be [r,g,b], [[inactive_r,inactive_g,inactive_b],[active_r,active_g,active_b]], "
+        f"or 'r,g,b' string, got {type(colour_value)}"
+    )
+
+
+def rgb_to_bgr(rgb):
+    return (rgb[2], rgb[1], rgb[0])
+
+
+def parse_overlay(overlay_value):
+    if overlay_value is None:
+        return None
+    if isinstance(overlay_value, str):
+        overlay_value = [part.strip() for part in overlay_value.split(",")]
+    if not isinstance(overlay_value, (list, tuple)) or len(overlay_value) != 4:
+        raise ValueError(
+            "Overlay must be an RGBA array like [r, g, b, a]"
+        )
+
+    try:
+        red = int(overlay_value[0])
+        green = int(overlay_value[1])
+        blue = int(overlay_value[2])
+    except (TypeError, ValueError):
+        raise ValueError(f"Overlay RGB values must be integers, got {overlay_value}")
+
+    for value in (red, green, blue):
+        if not (0 <= value <= 255):
+            raise ValueError(f"Overlay RGB values must be between 0 and 255, got {overlay_value}")
+
+    try:
+        alpha_value = float(overlay_value[3])
+    except (TypeError, ValueError):
+        raise ValueError(f"Overlay alpha must be numeric, got {overlay_value[3]}")
+
+    if 0.0 <= alpha_value <= 1.0:
+        alpha = alpha_value
+    elif 0.0 <= alpha_value <= 255.0:
+        alpha = alpha_value / 255.0
+    else:
+        raise ValueError(
+            f"Overlay alpha must be between 0 and 1, or 0 and 255, got {overlay_value[3]}"
+        )
+
+    return {
+        'rgb': (red, green, blue),
+        'bgr': rgb_to_bgr((red, green, blue)),
+        'alpha': alpha,
+    }
 
 
 class MIDIController:
@@ -341,7 +414,7 @@ class MIDIFileRecorder:
 class Trigger:
     """Represents a visual trigger area and its MIDI mapping."""
     
-    # Default color for visual feedback
+    # Default color for visual feedback (RGB)
     DEFAULT_COLOUR = (255, 255, 255)  # White
     
     def __init__(self, config, global_defaults=None):
@@ -362,10 +435,27 @@ class Trigger:
         if self.position is not None and self.shape is not None:
             raise ValueError(f"Trigger '{self.name}' cannot have both 'position' and 'shape' - use one or the other")
 
-        colour_value = config.get('colour', global_defaults.get('colour'))
-        colour = parse_colour(colour_value) if colour_value is not None else self.DEFAULT_COLOUR
-        self.active_color = colour
-        self.inactive_color = tuple(int(round(c * 0.5)) for c in colour)
+        global_colour_value = global_defaults.get('colour', global_defaults.get('color'))
+        if 'colour' in config:
+            colour_value = config.get('colour')
+        elif 'color' in config:
+            colour_value = config.get('color')
+        else:
+            colour_value = global_colour_value
+        colour = parse_colour(colour_value) if colour_value is not None else {
+            "inactive_rgb": None,
+            "active_rgb": self.DEFAULT_COLOUR,
+        }
+        active_rgb = colour["active_rgb"]
+        inactive_rgb = colour["inactive_rgb"]
+        if inactive_rgb is None:
+            inactive_rgb = tuple(int(round(c * 0.5)) for c in active_rgb)
+
+        # Store source colors in RGB, convert to BGR only when calling OpenCV APIs.
+        self.active_color_rgb = active_rgb
+        self.inactive_color_rgb = inactive_rgb
+        self.active_color = rgb_to_bgr(active_rgb)
+        self.inactive_color = rgb_to_bgr(inactive_rgb)
         
         # Validate position percentages if position is used
         if self.position is not None:
@@ -540,6 +630,7 @@ class Trigger:
         if movement_config is not None:
             self.movement = {
                 'direction': movement_config.get('direction', [0, 0]),
+                # Speed is interpreted as percentage of frame width per second.
                 'speed': float(movement_config.get('speed', 0)),
                 'duration': float(movement_config.get('duration', 0)),
             }
@@ -720,8 +811,9 @@ class Trigger:
         if mag > 0:
             dx /= mag
             dy /= mag
-        offset_x = dx * speed * elapsed
-        offset_y = dy * speed * elapsed
+        speed_px_per_sec = (speed / 100.0) * frame_width
+        offset_x = dx * speed_px_per_sec * elapsed
+        offset_y = dy * speed_px_per_sec * elapsed
         self._movement_px_offset = (offset_x, offset_y)
         bx, by, bw, bh = self._base_roi_coords
         new_x = int(round(bx + offset_x))
@@ -961,12 +1053,15 @@ class VideoMIDITrigger:
         self.use_camera = False
         self.use_image = False
         self.video_path = None
+        self.video_display_source = None
+        self.temp_video_path = None
         self.image_path = None
         self.camera_name = None
         self.camera_index = None
         self.available_cameras = []
         self.mirror = False
         self.scale = 1.0
+        self.overlay = None
         self.show_triggers = True
         self.window_name = "Video-MIDI Trigger"
         self.frame_count = 0
@@ -1023,7 +1118,8 @@ class VideoMIDITrigger:
         elif self.use_image:
             print(f"Image: {self.image_path}")
         else:
-            print(f"Video: {self.video_path}")
+            display_source = self.video_display_source or self.video_path
+            print(f"Video: {display_source}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
         print(f"FPS: {self.fps}")
         if not self.use_camera and self.video_duration_s is not None:
@@ -1052,9 +1148,11 @@ class VideoMIDITrigger:
         self.camera_name = None
         self.camera_index = None
         self.video_path = None
+        self.video_display_source = None
         self.image_path = None
         self.mirror = bool(self.config.get('mirror', False))
         self.scale = float(self.config.get('scale', 1.0))
+        self.overlay = parse_overlay(self.config.get('overlay'))
         if self.scale <= 0:
             raise ValueError(f"Scale must be > 0, got {self.scale}")
 
@@ -1063,6 +1161,12 @@ class VideoMIDITrigger:
         if isinstance(source, str):
             if source.lower() == "camera":
                 self.use_camera = True
+            elif self._is_youtube_url(source):
+                self.video_path = self._download_youtube_video(source)
+                self.video_display_source = source
+            elif self._is_stream_url(source):
+                self.video_path = source
+                self.video_display_source = source
             elif os.path.exists(source) and Path(source).suffix.lower() in IMAGE_EXTENSIONS:
                 self.use_image = True
                 self.image_path = source
@@ -1075,14 +1179,21 @@ class VideoMIDITrigger:
         else:
             self.video_path = source
 
-        if not self.use_camera and not self.use_image and self.video_path and not os.path.exists(self.video_path):
+        if (
+            not self.use_camera
+            and not self.use_image
+            and self.video_path
+            and not self._is_stream_url(self.video_path)
+            and not os.path.exists(self.video_path)
+        ):
             raise FileNotFoundError(f"Video file not found: {self.video_path}")
         
         # Extract global defaults for triggers
         global_defaults = {
             'debounce': self.config.get('debounce', 0.0),
             'throttle': self.config.get('throttle', 0.0),
-            'colour': self.config.get('colour')
+            'colour': self.config.get('colour', self.config.get('color')),
+            'color': self.config.get('color', self.config.get('colour')),
         }
         
         # Expand multi-note line triggers into individual segment triggers
@@ -1115,7 +1226,8 @@ class VideoMIDITrigger:
                         p1[1] + (p2[1] - p1[1]) * frac_end,
                     ]
                     sub = copy.deepcopy(t)
-                    sub['name'] = f"{t.get('name', 'Trigger')} [{i + 1}]"
+                    note_number = parse_midi_note(note)
+                    sub['name'] = f"{t.get('name', 'Trigger')} [{note_number}]"
                     sub['shape'] = [seg_p1, seg_p2]
                     sub['midi']['note'] = note
                     expanded.append(sub)
@@ -1124,6 +1236,112 @@ class VideoMIDITrigger:
 
         # Rebuild triggers
         self.triggers = [Trigger(t, global_defaults=global_defaults) for t in expanded]
+
+    @staticmethod
+    def _is_stream_url(value):
+        if not isinstance(value, str):
+            return False
+        parsed = urlparse(value)
+        return parsed.scheme.lower() in {"http", "https", "rtsp", "rtmp"}
+
+    @staticmethod
+    def _is_youtube_url(value):
+        if not isinstance(value, str):
+            return False
+        parsed = urlparse(value)
+        hostname = (parsed.hostname or "").lower()
+        return (
+            hostname == "youtu.be"
+            or hostname.endswith("youtube.com")
+            or hostname.endswith("youtube-nocookie.com")
+        )
+
+    def _download_youtube_video(self, youtube_url):
+        try:
+            from yt_dlp import YoutubeDL
+        except ImportError as exc:
+            raise RuntimeError(
+                "YouTube source support requires 'yt-dlp'. Install it with: uv add yt-dlp"
+            ) from exc
+
+        cache_dir_cfg = self.config.get("youtube_cache_dir", ".youtube-cache")
+        cache_dir = Path(cache_dir_cfg).expanduser()
+        if not cache_dir.is_absolute():
+            cache_dir = (self.config_path.parent / cache_dir).resolve()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Resolve video id first to build a stable cache filename.
+        info_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+        }
+        try:
+            with YoutubeDL(info_opts) as ydl:
+                info = ydl.extract_info(youtube_url, download=False)
+        except Exception as exc:
+            raise RuntimeError(f"Could not resolve YouTube URL metadata: {youtube_url}") from exc
+
+        if isinstance(info, dict) and info.get("entries"):
+            info = next((entry for entry in info["entries"] if entry), None)
+
+        video_id = None
+        if isinstance(info, dict):
+            video_id = info.get("id")
+        if not video_id:
+            raise RuntimeError(f"Could not resolve YouTube video id for: {youtube_url}")
+
+        output_path = cache_dir / f"{video_id}.mp4"
+        if output_path.exists() and output_path.stat().st_size > 0:
+            print(f"Video: Using cached YouTube file {output_path}")
+            self.temp_video_path = str(output_path)
+            return str(output_path)
+
+        # Retry with different YouTube client profiles to reduce 403 failures.
+        retry_profiles = [
+            {"player_client": ["android", "web"]},
+            {"player_client": ["tv", "android"]},
+            {"player_client": ["ios", "android"]},
+        ]
+
+        base_opts = {
+            "quiet": False,
+            "no_warnings": False,
+            "noplaylist": True,
+            "format": "best[ext=mp4]/best",
+            "outtmpl": str(output_path),
+            "merge_output_format": "mp4",
+            "overwrites": False,
+        }
+
+        print(f"Video: Downloading YouTube source to cache {output_path}...")
+        last_exc = None
+        for profile in retry_profiles:
+            try:
+                ydl_opts = dict(base_opts)
+                ydl_opts["extractor_args"] = {"youtube": profile}
+                with YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([youtube_url])
+                break
+            except Exception as exc:
+                last_exc = exc
+                if output_path.exists() and output_path.stat().st_size == 0:
+                    try:
+                        output_path.unlink()
+                    except OSError:
+                        pass
+        else:
+            raise RuntimeError(
+                "Could not download YouTube URL. YouTube may be rejecting the request (HTTP 403). "
+                "Try running with uv-managed Python 3.10+ and ensure yt-dlp is up to date. "
+                f"URL: {youtube_url}"
+            ) from last_exc
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError(f"yt-dlp did not produce a playable video file for: {youtube_url}")
+
+        self.temp_video_path = str(output_path)
+        return str(output_path)
 
     def _ensure_trigger_devices(self):
         for trigger in self.triggers:
@@ -1271,25 +1489,29 @@ class VideoMIDITrigger:
         previous_source = self.config.get('source') if self.config else None
         previous_device = self.config.get('device') if self.config else None
         
-        # Save timing state from existing triggers before reload
+        # Save runtime state from existing triggers before reload.
+        # This keeps debounce/throttle, movement progress, and detection buffers
+        # stable when hot-reloading config changes.
         timing_state = {}
         for trigger in self.triggers:
+            previous_roi = trigger.previous_roi.copy() if trigger.previous_roi is not None else None
+            first_roi = trigger.first_roi.copy() if trigger.first_roi is not None else None
             timing_state[trigger.name] = {
                 'became_invalid_time': trigger.became_invalid_time,
                 'last_deactivated_time': trigger.last_deactivated_time,
-                'active': trigger.active
+                'active': trigger.active,
+                'last_cc_value': trigger.last_cc_value,
+                'range_level': trigger.range_level,
+                'detected_value': trigger.detected_value,
+                'previous_roi': previous_roi,
+                'first_roi': first_roi,
+                'movement_start_time': trigger._movement_start_time,
+                'movement_px_offset': trigger._movement_px_offset,
+                'roi_coords': trigger.roi_coords,
             }
         
         self._load_config()
         self._ensure_trigger_devices()
-        
-        # Restore timing state to triggers with matching names
-        for trigger in self.triggers:
-            if trigger.name in timing_state:
-                state = timing_state[trigger.name]
-                trigger.became_invalid_time = state['became_invalid_time']
-                trigger.last_deactivated_time = state['last_deactivated_time']
-                trigger.active = state['active']
         
         # Warn if device/source changed (requires restart to take effect)
         if self.config.get('device') != previous_device:
@@ -1300,6 +1522,44 @@ class VideoMIDITrigger:
         # Re-setup trigger ROIs with current frame size
         for trigger in self.triggers:
             trigger.setup_roi(self.frame_height, self.frame_width)
+
+        # Restore runtime state to triggers with matching names.
+        for trigger in self.triggers:
+            if trigger.name not in timing_state:
+                continue
+
+            state = timing_state[trigger.name]
+            trigger.became_invalid_time = state['became_invalid_time']
+            trigger.last_deactivated_time = state['last_deactivated_time']
+            trigger.active = state['active']
+            trigger.last_cc_value = state['last_cc_value']
+            trigger.range_level = state['range_level']
+            trigger.detected_value = state['detected_value']
+            trigger.previous_roi = state['previous_roi']
+            trigger.first_roi = state['first_roi']
+
+            if trigger.movement is not None:
+                trigger._movement_start_time = state['movement_start_time']
+                trigger._movement_px_offset = state['movement_px_offset']
+
+                prior_roi = state['roi_coords']
+                if (
+                    prior_roi is not None
+                    and trigger.roi_coords is not None
+                    and prior_roi[2] == trigger.roi_coords[2]
+                    and prior_roi[3] == trigger.roi_coords[3]
+                ):
+                    x, y, w, h = prior_roi
+                    x = max(0, min(self.frame_width - w, x))
+                    y = max(0, min(self.frame_height - h, y))
+                    trigger.roi_coords = (x, y, w, h)
+
+                    off_x, off_y = trigger._movement_px_offset
+                    base_x = int(round(x - off_x))
+                    base_y = int(round(y - off_y))
+                    base_x = max(0, min(self.frame_width - w, base_x))
+                    base_y = max(0, min(self.frame_height - h, base_y))
+                    trigger._base_roi_coords = (base_x, base_y, w, h)
         
         print("Config reloaded.")
     
@@ -1383,8 +1643,21 @@ class VideoMIDITrigger:
                                     if PRINT_MIDI_SENDS:
                                         print(f"✗ {trigger.name}: CC OFF (CC: {cc}, Value: {off_value})")
             
-            # Draw trigger area on frame
-            if self.show_triggers:
+        if self.overlay and self.overlay['alpha'] > 0:
+            overlay_frame = frame.copy()
+            overlay_frame[:] = self.overlay['bgr']
+            cv2.addWeighted(
+                overlay_frame,
+                self.overlay['alpha'],
+                frame,
+                1.0 - self.overlay['alpha'],
+                0,
+                frame,
+            )
+
+        # Draw trigger areas above the source overlay.
+        if self.show_triggers:
+            for trigger in self.triggers:
                 trigger.draw_on_frame(frame)
         
         # Draw creation mode visual feedback

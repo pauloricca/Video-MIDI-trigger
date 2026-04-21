@@ -1,0 +1,19 @@
+source: https://www.youtube.com/watch?v=oNHs_-pHZTs
+overlay: [0, 80, 120, 150]
+
+triggers:
+  - name: "scan"
+    colour:
+      - [70, 100, 120] # not active colour
+      - [255, 0, 0] # active colour
+    shape:
+      - [0, 45]
+      - [100, 45]
+    type: "brightness"
+    threshold: 90
+    midi:
+      note: [53, 55, 58, 60, 62, 64, 66, 69, 71] 
+      velocity:
+        min: [80, 60]
+        max: [150, 127]
+      channel: 0

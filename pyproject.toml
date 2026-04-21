@@ -11,4 +11,5 @@ dependencies = [
     "python-rtmidi>=1.4.0",
     "pyyaml>=5.4.0",
     "ruamel-yaml>=0.17.0",
+    "yt-dlp>=2025.1.26",
 ]

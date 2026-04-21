@@ -101,7 +101,7 @@ triggers:
     threshold: 150
     movement:
       direction: [1, 0]   # Move right (normalized vector)
-      speed: 80           # Pixels per second
+      speed: 80           # Percentage of frame width per second
       duration: 4         # Loop every 4 seconds
     midi:
       note: 67  # G

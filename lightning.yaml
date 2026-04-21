@@ -1,0 +1,22 @@
+# source: "wind.mp4"
+# source: https://www.youtube.com/watch?v=5jlUVr6gkos
+# source: https://www.youtube.com/watch?v=yEn8_X7Ei3A
+# source: https://www.youtube.com/watch?v=wXr9miHB-1Q
+source: https://www.youtube.com/watch?v=bCWc2ubxf2E
+
+triggers:
+  - name: "scan"
+    colour:
+      - [70, 100, 120] # not active colour
+      - [255, 0, 0] # active colour
+    shape:
+      - [0, 60]
+      - [100, 60]
+    type: "brightness"
+    threshold: 40
+    midi:
+      note: [60, 62, 64, 66, 69, 71] 
+      velocity:
+        min: [40, 60]
+        max: [150, 127]
+      channel: 0
