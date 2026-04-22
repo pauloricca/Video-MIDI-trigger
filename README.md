@@ -166,7 +166,7 @@ triggers:
 - **device** (optional): Global default MIDI output device name. Used when a trigger does not specify its own device.
 - **debounce** (optional): Global default debounce time in seconds (default 0). Prevents triggers from deactivating too quickly.
 - **throttle** (optional): Global default throttle time in seconds (default 0). Prevents triggers from reactivating too quickly.
-- **colour** / **color** (optional): Global default trigger display color in RGB. Accepts either `[r, g, b]` or `[[inactive_r, inactive_g, inactive_b], [active_r, active_g, active_b]]`.
+- **colour** / **color** (optional): Global default trigger display color in RGB(A). Accepts `[r, g, b]`, `[r, g, b, a]`, `[[inactive_r, inactive_g, inactive_b], [active_r, active_g, active_b]]`, or `[[inactive_r, inactive_g, inactive_b, inactive_a], [active_r, active_g, active_b, active_a]]`. Alpha can be `0-255` or `0.0-1.0`.
 - **Live reload**: The app watches the YAML file and reloads trigger values on change. Changing the global `device` or `source` requires a restart to take effect.
 - **triggers**: List of trigger definitions
   - **name**: Descriptive name for the trigger
@@ -189,10 +189,22 @@ triggers:
     - **range**: Maps brightness to a MIDI CC value
     - **difference range**: Maps difference from first frame to a MIDI CC value (reset with 'r' key)
   - **threshold**: Brightness value (0-255) that activates the trigger (brightness/darkness), or average pixel difference (0-255) for motion/difference detection
+  - **retrigger** (optional): Allows an already-active trigger to fire again when a stronger threshold is crossed.
+    - **threshold**: Secondary threshold that must be crossed while the trigger is already active.
+    - **debounce**: Minimum time in seconds since the last trigger fire before the retrigger is allowed.
+    - Behavior: if the trigger first activates below the retrigger threshold, then later crosses above it after the debounce period, the app sends an OFF and immediately sends ON again.
   - **min/max**: Brightness range (0-255) for range triggers, or difference range (0-255) for difference range triggers
   - **debounce** (optional): Per-trigger debounce time in seconds. When a trigger becomes invalid, it will wait this duration before sending Note OFF. Overrides global default.
   - **throttle** (optional): Per-trigger throttle time in seconds. After deactivation, the trigger will wait this duration before it can reactivate. Overrides global default.
-  - **colour** / **color** (optional): Per-trigger display color in RGB. Accepts either `[r, g, b]` (inactive is auto-dimmed), or `[[inactive_r, inactive_g, inactive_b], [active_r, active_g, active_b]]` for explicit inactive/active colors.
+  - **voices** (optional): Maximum simultaneous note voices for this trigger (note mode only). When a new note would exceed this limit, the oldest active voice in the same trigger group is sent Note OFF first (voice stealing).
+  - **colour** / **color** (optional): Per-trigger display color in RGB(A). Accepts `[r, g, b]`, `[r, g, b, a]`, `[[inactive_r, inactive_g, inactive_b], [active_r, active_g, active_b]]`, or `[[inactive_r, inactive_g, inactive_b, inactive_a], [active_r, active_g, active_b, active_a]]`. If only one color is provided, inactive color is auto-dimmed. Alpha can be `0-255` or `0.0-1.0`.
+    - For triggers using variable velocity, the active visual color is interpolated from inactive→active color using the same detected-value proportion used for velocity interpolation.
+  - **movement** (optional): Move the trigger shape/region over time.
+    - **type**: Movement mode. `loop` repeats from the start when it reaches the end. `ping-pong` reverses direction at the end instead of jumping back. Default: `loop`.
+    - **direction**: `[x, y]` direction vector.
+    - **speed**: Speed in percentage of frame width per second.
+    - **duration**: Duration in seconds for one forward pass.
+    - **random-start-points**: When `true`, each trigger starts at a random point along its movement trajectory instead of always starting at the beginning. For segmented multi-note line triggers, each segment gets its own random start point.
   - **device** (optional): Per-trigger MIDI output device name. Overrides the global `device` for this trigger.
   - **midi**: MIDI message configuration
     - **note**: MIDI note number (0-127) or note name for brightness/darkness/motion/difference (e.g. `C`, `D#4`, `Eb2`). If no octave is provided, octave 4 is assumed (so `C` = middle C = 60).

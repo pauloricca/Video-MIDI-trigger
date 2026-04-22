@@ -1,22 +1,27 @@
-# source: "wind.mp4"
-# source: https://www.youtube.com/watch?v=5jlUVr6gkos
-# source: https://www.youtube.com/watch?v=yEn8_X7Ei3A
-# source: https://www.youtube.com/watch?v=wXr9miHB-1Q
 source: https://www.youtube.com/watch?v=bCWc2ubxf2E
 
 triggers:
   - name: "scan"
     colour:
-      - [70, 100, 120] # not active colour
-      - [255, 0, 0] # active colour
+      - [20, 60, 70]
+      - [0, 255, 60]
     shape:
-      - [0, 60]
-      - [100, 60]
+      - [0, 25]
+      - [100, 25]
     type: "brightness"
     threshold: 40
+    retrigger:
+      threshold: 80
+      debounce: 0.5
+    movement:
+      direction: [0, 1]
+      speed: 0.7
+      duration: 40
+      type: ping-pong
+      random-start-points: true
     midi:
-      note: [60, 62, 64, 66, 69, 71] 
+      note: [54, 57, 64, 66, 69, 74] 
       velocity:
-        min: [40, 60]
+        min: [40, 10]
         max: [150, 127]
       channel: 0

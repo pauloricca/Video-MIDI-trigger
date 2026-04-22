@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 import re
 import copy
+import random
 import atexit
 import argparse
 from urllib.parse import urlparse
@@ -63,52 +64,76 @@ def parse_midi_note(note_value, default_octave=4):
 
 
 def parse_colour(colour_value):
-    def _parse_rgb_triplet(values, error_context):
-        if len(values) != 3:
-            raise ValueError(f"Colour must have 3 values, got {error_context}")
+    def _parse_alpha(value, error_context):
         try:
-            rgb = tuple(int(v) for v in values)
+            alpha_value = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"Colour alpha must be numeric, got {error_context}")
+        if 0.0 <= alpha_value <= 1.0:
+            return alpha_value
+        if 0.0 <= alpha_value <= 255.0:
+            return alpha_value / 255.0
+        raise ValueError(f"Colour alpha must be 0-1 or 0-255, got {error_context}")
+
+    def _parse_rgb_or_rgba(values, error_context):
+        if len(values) not in (3, 4):
+            raise ValueError(f"Colour must have 3 (RGB) or 4 (RGBA) values, got {error_context}")
+        try:
+            rgb = tuple(int(v) for v in values[:3])
         except (TypeError, ValueError):
             raise ValueError(f"Colour values must be integers, got {error_context}")
         for v in rgb:
             if not (0 <= v <= 255):
                 raise ValueError(f"Colour values must be between 0 and 255, got {rgb}")
-        return rgb
+        alpha = 1.0
+        if len(values) == 4:
+            alpha = _parse_alpha(values[3], values[3])
+        return {
+            'rgb': rgb,
+            'alpha': alpha,
+        }
 
     if colour_value is None:
         return None
     if isinstance(colour_value, str):
         parts = [p.strip() for p in colour_value.split(",")]
-        if len(parts) != 3:
+        if len(parts) not in (3, 4):
             raise ValueError(
-                f"Colour must be RGB values like '255,255,255', got '{colour_value}'"
+                f"Colour must be RGB(A) values like '255,255,255' or '255,255,255,128', got '{colour_value}'"
             )
-        active_rgb = _parse_rgb_triplet(parts, colour_value)
+        active = _parse_rgb_or_rgba(parts, colour_value)
         return {
             "inactive_rgb": None,
-            "active_rgb": active_rgb,
+            "inactive_alpha": None,
+            "active_rgb": active['rgb'],
+            "active_alpha": active['alpha'],
         }
     if isinstance(colour_value, (list, tuple)):
-        # Single RGB value: [r, g, b]
-        if len(colour_value) == 3 and not isinstance(colour_value[0], (list, tuple)):
-            active_rgb = _parse_rgb_triplet(colour_value, colour_value)
+        # Single RGB(A) value: [r, g, b] or [r, g, b, a]
+        if len(colour_value) in (3, 4) and not isinstance(colour_value[0], (list, tuple)):
+            active = _parse_rgb_or_rgba(colour_value, colour_value)
             return {
                 "inactive_rgb": None,
-                "active_rgb": active_rgb,
+                "inactive_alpha": None,
+                "active_rgb": active['rgb'],
+                "active_alpha": active['alpha'],
             }
 
-        # Pair of RGB values: [[inactive_r, inactive_g, inactive_b], [active_r, active_g, active_b]]
+        # Pair of RGB(A) values:
+        # [[inactive_r, inactive_g, inactive_b(,inactive_a)], [active_r, active_g, active_b(,active_a)]]
         if len(colour_value) == 2:
-            inactive_rgb = _parse_rgb_triplet(colour_value[0], colour_value[0])
-            active_rgb = _parse_rgb_triplet(colour_value[1], colour_value[1])
+            inactive = _parse_rgb_or_rgba(colour_value[0], colour_value[0])
+            active = _parse_rgb_or_rgba(colour_value[1], colour_value[1])
             return {
-                "inactive_rgb": inactive_rgb,
-                "active_rgb": active_rgb,
+                "inactive_rgb": inactive['rgb'],
+                "inactive_alpha": inactive['alpha'],
+                "active_rgb": active['rgb'],
+                "active_alpha": active['alpha'],
             }
 
     raise ValueError(
-        "Colour must be [r,g,b], [[inactive_r,inactive_g,inactive_b],[active_r,active_g,active_b]], "
-        f"or 'r,g,b' string, got {type(colour_value)}"
+        "Colour must be [r,g,b], [r,g,b,a], [[inactive_rgb],[active_rgb]], [[inactive_rgba],[active_rgba]], "
+        f"or 'r,g,b(,a)' string, got {type(colour_value)}"
     )
 
 
@@ -444,16 +469,24 @@ class Trigger:
             colour_value = global_colour_value
         colour = parse_colour(colour_value) if colour_value is not None else {
             "inactive_rgb": None,
+            "inactive_alpha": None,
             "active_rgb": self.DEFAULT_COLOUR,
+            "active_alpha": 1.0,
         }
         active_rgb = colour["active_rgb"]
         inactive_rgb = colour["inactive_rgb"]
+        active_alpha = colour["active_alpha"]
+        inactive_alpha = colour["inactive_alpha"]
         if inactive_rgb is None:
             inactive_rgb = tuple(int(round(c * 0.5)) for c in active_rgb)
+        if inactive_alpha is None:
+            inactive_alpha = active_alpha
 
         # Store source colors in RGB, convert to BGR only when calling OpenCV APIs.
         self.active_color_rgb = active_rgb
         self.inactive_color_rgb = inactive_rgb
+        self.active_alpha = active_alpha
+        self.inactive_alpha = inactive_alpha
         self.active_color = rgb_to_bgr(active_rgb)
         self.inactive_color = rgb_to_bgr(inactive_rgb)
         
@@ -484,6 +517,22 @@ class Trigger:
         self.range_max = config.get('max')
         self.midi_config = config['midi']
         self.device_name = config.get('device')
+        self.voice_group = config.get('_voice_group', self.name)
+        voices_value = config.get('voices')
+        if voices_value is None:
+            self.voices = None
+        else:
+            try:
+                voices_int = int(voices_value)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"Voices must be a positive integer for trigger '{self.name}', got {voices_value}"
+                )
+            if voices_int < 1:
+                raise ValueError(
+                    f"Voices must be >= 1 for trigger '{self.name}', got {voices_int}"
+                )
+            self.voices = voices_int
         
         # Load debounce and throttle parameters (per-trigger or global defaults)
         global_defaults = global_defaults or {}
@@ -495,6 +544,27 @@ class Trigger:
             raise ValueError(f"Debounce must be >= 0, got {self.debounce} for trigger '{self.name}'")
         if self.throttle < 0:
             raise ValueError(f"Throttle must be >= 0, got {self.throttle} for trigger '{self.name}'")
+
+        retrigger_config = config.get('retrigger')
+        if retrigger_config is not None:
+            retrigger_threshold = retrigger_config.get('threshold')
+            if retrigger_threshold is None:
+                raise ValueError(f"Missing retrigger threshold for trigger '{self.name}'")
+            retrigger_debounce = float(retrigger_config.get('debounce', 0.0))
+            if not (0 <= retrigger_threshold <= 255):
+                raise ValueError(
+                    f"Retrigger threshold must be between 0 and 255, got {retrigger_threshold} for trigger '{self.name}'"
+                )
+            if retrigger_debounce < 0:
+                raise ValueError(
+                    f"Retrigger debounce must be >= 0, got {retrigger_debounce} for trigger '{self.name}'"
+                )
+            self.retrigger = {
+                'threshold': float(retrigger_threshold),
+                'debounce': retrigger_debounce,
+            }
+        else:
+            self.retrigger = None
         
         # Validate trigger parameters
         if self.trigger_type in ('brightness', 'darkness', 'motion', 'difference'):
@@ -624,19 +694,30 @@ class Trigger:
         # Timing state for debounce and throttle
         self.became_invalid_time = None  # Time when trigger condition became false
         self.last_deactivated_time = None  # Time when trigger was actually deactivated (sent Note OFF)
+        self.last_trigger_time = None  # Time when trigger last sent its ON action
+        self.retrigger_armed = False  # Becomes true once detected value is below retrigger threshold
 
         # Movement state
         movement_config = config.get('movement')
         if movement_config is not None:
+            movement_type = movement_config.get('type', 'loop')
+            if movement_type not in ('loop', 'ping-pong'):
+                raise ValueError(
+                    f"Movement type must be 'loop' or 'ping-pong', got '{movement_type}' for trigger '{self.name}'"
+                )
+            random_start_points = bool(movement_config.get('random-start-points', False))
             self.movement = {
+                'type': movement_type,
                 'direction': movement_config.get('direction', [0, 0]),
                 # Speed is interpreted as percentage of frame width per second.
                 'speed': float(movement_config.get('speed', 0)),
                 'duration': float(movement_config.get('duration', 0)),
+                'random_start_points': random_start_points,
             }
         else:
             self.movement = None
         self._movement_start_time = None
+        self._movement_phase_offset_s = 0.0
         self._movement_px_offset = (0.0, 0.0)
 
     def _avg_brightness(self, frame, gray_frame=None):
@@ -797,15 +878,28 @@ class Trigger:
         if self.movement is None or self._base_roi_coords is None:
             return
         direction = self.movement['direction']
+        movement_type = self.movement.get('type', 'loop')
+        random_start_points = self.movement.get('random_start_points', False)
         speed = self.movement['speed']
         duration = self.movement['duration']
         if speed == 0 or (direction[0] == 0 and direction[1] == 0):
             return
         if self._movement_start_time is None:
             self._movement_start_time = current_time
-        elapsed = current_time - self._movement_start_time
+            if random_start_points and duration > 0:
+                cycle_duration = duration * (2.0 if movement_type == 'ping-pong' else 1.0)
+                self._movement_phase_offset_s = random.uniform(0.0, cycle_duration)
+        elapsed = (current_time - self._movement_start_time) + self._movement_phase_offset_s
         if duration > 0:
-            elapsed = elapsed % duration
+            if movement_type == 'ping-pong':
+                cycle_duration = duration * 2.0
+                cycle_elapsed = elapsed % cycle_duration
+                if cycle_elapsed > duration:
+                    elapsed = cycle_duration - cycle_elapsed
+                else:
+                    elapsed = cycle_elapsed
+            else:
+                elapsed = elapsed % duration
         dx, dy = float(direction[0]), float(direction[1])
         mag = (dx * dx + dy * dy) ** 0.5
         if mag > 0:
@@ -960,17 +1054,60 @@ class Trigger:
         
         # Clamp to MIDI velocity range and convert to int
         return int(max(0, min(127, round(velocity))))
+
+    def _get_variable_velocity_mix(self):
+        """Return a 0..1 mix factor based on detected value for variable velocity triggers."""
+        if (
+            not hasattr(self, 'velocity_mode')
+            or self.velocity_mode != 'variable'
+            or self.trigger_type not in ('brightness', 'darkness', 'motion', 'difference')
+        ):
+            return None
+
+        min_detected = self.velocity_min_detected
+        max_detected = self.velocity_max_detected
+        if max_detected == min_detected:
+            return 1.0
+
+        mix = (self.detected_value - min_detected) / (max_detected - min_detected)
+        return float(max(0.0, min(1.0, mix)))
     
     def draw_on_frame(self, frame):
         """Draw the trigger area on the frame."""
         if self.roi_coords is None:
             return
+
+        def draw_with_alpha(target_frame, alpha, draw_callback):
+            alpha = max(0.0, min(1.0, float(alpha)))
+            if alpha <= 0.0:
+                return
+            if alpha >= 1.0:
+                draw_callback(target_frame)
+                return
+            overlay = target_frame.copy()
+            draw_callback(overlay)
+            cv2.addWeighted(overlay, alpha, target_frame, 1.0 - alpha, 0, target_frame)
         
         x, y, w, h = self.roi_coords
         label_margin = 10
         
         # Choose color based on active state
         color = self.active_color if self.active else self.inactive_color
+        alpha = self.active_alpha if self.active else self.inactive_alpha
+
+        # For variable velocity triggers, blend active color by the same detected-value proportion
+        # used for velocity interpolation.
+        if self.active:
+            mix = self._get_variable_velocity_mix()
+            if mix is not None:
+                inactive_rgb = self.inactive_color_rgb
+                active_rgb = self.active_color_rgb
+                blended_rgb = tuple(
+                    int(round(inactive_rgb[i] + (active_rgb[i] - inactive_rgb[i]) * mix))
+                    for i in range(3)
+                )
+                color = rgb_to_bgr(blended_rgb)
+                alpha = self.inactive_alpha + (self.active_alpha - self.inactive_alpha) * mix
 
         if self.trigger_type == 'range':
             # Filled vertical bar (transparent overlay)
@@ -979,8 +1116,10 @@ class Trigger:
                 overlay = frame.copy()
                 fill_y = y + (h - fill_h)
                 cv2.rectangle(overlay, (x, fill_y), (x + w, y + h), self.active_color, -1)
-                cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
+                fill_alpha = min(max(0.0, self.active_alpha), 0.35)
+                cv2.addWeighted(overlay, fill_alpha, frame, 1.0 - fill_alpha, 0, frame)
             color = self.active_color if self.active else self.inactive_color
+            alpha = self.active_alpha if self.active else self.inactive_alpha
         
         # Draw shape if defined, otherwise draw rectangle
         if self.shape is not None:
@@ -993,38 +1132,42 @@ class Trigger:
                 px = int(frame_width * point[0] / 100) + off_x
                 py = int(frame_height * point[1] / 100) + off_y
                 shape_pixels.append((px, py))
-            
-            if len(shape_pixels) == 1:
-                # Single pixel - draw a small circle
-                cv2.circle(frame, shape_pixels[0], 3, color, 2)
-            elif len(shape_pixels) == 2:
-                # Line
-                cv2.line(frame, shape_pixels[0], shape_pixels[1], color, 2)
-            else:
-                # Polygon (3+ points)
-                points = np.array(shape_pixels, dtype=np.int32)
-                cv2.polylines(frame, [points], isClosed=True, color=color, thickness=2)
-            
+
             # Draw label near the first point of the shape
             label_y = shape_pixels[0][1] - label_margin
             if label_y < 12:
                 label_y = shape_pixels[0][1] + label_margin
             label_x = shape_pixels[0][0] + label_margin
             label_pos = (label_x, label_y)
-            cv2.putText(frame, self.name, label_pos, cv2.FONT_HERSHEY_SIMPLEX, 
-                        0.5, color, 1, cv2.LINE_AA)
+
+            def _draw_shape(target):
+                if len(shape_pixels) == 1:
+                    # Single pixel - draw a small circle
+                    cv2.circle(target, shape_pixels[0], 3, color, 2)
+                elif len(shape_pixels) == 2:
+                    # Line
+                    cv2.line(target, shape_pixels[0], shape_pixels[1], color, 2)
+                else:
+                    # Polygon (3+ points)
+                    points = np.array(shape_pixels, dtype=np.int32)
+                    cv2.polylines(target, [points], isClosed=True, color=color, thickness=2)
+                cv2.putText(target, self.name, label_pos, cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5, color, 1, cv2.LINE_AA)
+
+            draw_with_alpha(frame, alpha, _draw_shape)
         else:
-            # Draw rectangle (original behavior)
-            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-            
-            # Draw label
             label = f"{self.name}"
             label_y = y - label_margin
             if label_y < 12:
                 label_y = y + label_margin
             label_x = x + label_margin
-            cv2.putText(frame, label, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 
-                        0.5, color, 1, cv2.LINE_AA)
+
+            def _draw_rectangle(target):
+                cv2.rectangle(target, (x, y), (x+w, y+h), color, 2)
+                cv2.putText(target, label, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5, color, 1, cv2.LINE_AA)
+
+            draw_with_alpha(frame, alpha, _draw_rectangle)
 
 
 class VideoMIDITrigger:
@@ -1198,9 +1341,10 @@ class VideoMIDITrigger:
         
         # Expand multi-note line triggers into individual segment triggers
         expanded = []
-        for t in self.config['triggers']:
+        for trigger_index, t in enumerate(self.config['triggers']):
             notes = t.get('midi', {}).get('note')
             shape = t.get('shape')
+            voice_group = f"{t.get('name', 'Trigger')}#{trigger_index}"
             # Unwrap single-element note lists
             if isinstance(notes, list) and len(notes) == 1:
                 t = copy.deepcopy(t)
@@ -1230,9 +1374,14 @@ class VideoMIDITrigger:
                     sub['name'] = f"{t.get('name', 'Trigger')} [{note_number}]"
                     sub['shape'] = [seg_p1, seg_p2]
                     sub['midi']['note'] = note
+                    if sub.get('voices') is not None:
+                        sub['_voice_group'] = voice_group
                     expanded.append(sub)
             else:
-                expanded.append(t)
+                sub = copy.deepcopy(t)
+                if sub.get('voices') is not None:
+                    sub['_voice_group'] = voice_group
+                expanded.append(sub)
 
         # Rebuild triggers
         self.triggers = [Trigger(t, global_defaults=global_defaults) for t in expanded]
@@ -1499,6 +1648,8 @@ class VideoMIDITrigger:
             timing_state[trigger.name] = {
                 'became_invalid_time': trigger.became_invalid_time,
                 'last_deactivated_time': trigger.last_deactivated_time,
+                'last_trigger_time': trigger.last_trigger_time,
+                'retrigger_armed': trigger.retrigger_armed,
                 'active': trigger.active,
                 'last_cc_value': trigger.last_cc_value,
                 'range_level': trigger.range_level,
@@ -1506,6 +1657,7 @@ class VideoMIDITrigger:
                 'previous_roi': previous_roi,
                 'first_roi': first_roi,
                 'movement_start_time': trigger._movement_start_time,
+                'movement_phase_offset_s': trigger._movement_phase_offset_s,
                 'movement_px_offset': trigger._movement_px_offset,
                 'roi_coords': trigger.roi_coords,
             }
@@ -1531,6 +1683,8 @@ class VideoMIDITrigger:
             state = timing_state[trigger.name]
             trigger.became_invalid_time = state['became_invalid_time']
             trigger.last_deactivated_time = state['last_deactivated_time']
+            trigger.last_trigger_time = state['last_trigger_time']
+            trigger.retrigger_armed = state['retrigger_armed']
             trigger.active = state['active']
             trigger.last_cc_value = state['last_cc_value']
             trigger.range_level = state['range_level']
@@ -1540,6 +1694,7 @@ class VideoMIDITrigger:
 
             if trigger.movement is not None:
                 trigger._movement_start_time = state['movement_start_time']
+                trigger._movement_phase_offset_s = state['movement_phase_offset_s']
                 trigger._movement_px_offset = state['movement_px_offset']
 
                 prior_roi = state['roi_coords']
@@ -1562,6 +1717,90 @@ class VideoMIDITrigger:
                     trigger._base_roi_coords = (base_x, base_y, w, h)
         
         print("Config reloaded.")
+
+    def _activate_trigger(self, trigger, current_time):
+        trigger.active = True
+        trigger.last_trigger_time = current_time
+        if trigger.retrigger is not None:
+            trigger.retrigger_armed = trigger.detected_value < trigger.retrigger['threshold']
+
+        if trigger.midi_mode == 'note':
+            note = trigger.midi_config['note']
+            velocity = trigger.get_velocity()
+            channel = trigger.midi_config['channel']
+            self.midi_manager.send_note_on(trigger.device_name, note, velocity, channel)
+            if PRINT_MIDI_SENDS:
+                print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
+        else:
+            cc = trigger.midi_config['cc']
+            value = trigger.midi_config['value']
+            channel = trigger.midi_config.get('channel', 0)
+            self.midi_manager.send_cc(trigger.device_name, cc, value, channel)
+            if PRINT_MIDI_SENDS:
+                print(f"✓ {trigger.name}: CC (CC: {cc}, Value: {value})")
+
+    def _enforce_voice_limit(self, incoming_trigger, current_time):
+        if incoming_trigger.voices is None or incoming_trigger.midi_mode != 'note':
+            return
+
+        active_group_triggers = [
+            trigger for trigger in self.triggers
+            if trigger is not incoming_trigger
+            and trigger.active
+            and trigger.midi_mode == 'note'
+            and trigger.voice_group == incoming_trigger.voice_group
+        ]
+
+        max_voices = incoming_trigger.voices
+        if len(active_group_triggers) < max_voices:
+            return
+
+        to_release_count = len(active_group_triggers) - max_voices + 1
+        active_group_triggers.sort(key=lambda t: t.last_trigger_time if t.last_trigger_time is not None else float('-inf'))
+
+        for trigger in active_group_triggers[:to_release_count]:
+            self._deactivate_trigger(trigger, current_time, log_prefix="↧")
+
+    def _deactivate_trigger(self, trigger, current_time, log_prefix="✗"):
+        trigger.active = False
+        trigger.last_deactivated_time = current_time
+        trigger.retrigger_armed = False
+        if trigger.midi_mode == 'note':
+            note = trigger.midi_config['note']
+            channel = trigger.midi_config['channel']
+            self.midi_manager.send_note_off(trigger.device_name, note, channel)
+            if PRINT_MIDI_SENDS:
+                print(f"{log_prefix} {trigger.name}: Note OFF (Note: {note})")
+        else:
+            off_value = trigger.midi_config.get('off_value')
+            if off_value is not None:
+                cc = trigger.midi_config['cc']
+                channel = trigger.midi_config.get('channel', 0)
+                self.midi_manager.send_cc(trigger.device_name, cc, off_value, channel)
+                if PRINT_MIDI_SENDS:
+                    print(f"{log_prefix} {trigger.name}: CC OFF (CC: {cc}, Value: {off_value})")
+
+    def _maybe_retrigger_active_trigger(self, trigger, current_time):
+        if trigger.retrigger is None or not trigger.active:
+            return
+
+        retrigger_threshold = trigger.retrigger['threshold']
+        if trigger.detected_value < retrigger_threshold:
+            trigger.retrigger_armed = True
+            return
+
+        if not trigger.retrigger_armed:
+            return
+
+        if trigger.last_trigger_time is None:
+            return
+
+        if (current_time - trigger.last_trigger_time) < trigger.retrigger['debounce']:
+            return
+
+        self._deactivate_trigger(trigger, current_time, log_prefix="↺")
+        trigger.became_invalid_time = None
+        self._activate_trigger(trigger, current_time)
     
     def process_frame(self, frame):
         """Process a single frame and check all triggers."""
@@ -1594,22 +1833,10 @@ class VideoMIDITrigger:
                             can_activate = time_since_deactivation >= trigger.throttle
                         
                         if can_activate:
-                            # Trigger activated
-                            trigger.active = True
-                            if trigger.midi_mode == 'note':
-                                note = trigger.midi_config['note']
-                                velocity = trigger.get_velocity()
-                                channel = trigger.midi_config['channel']
-                                self.midi_manager.send_note_on(trigger.device_name, note, velocity, channel)
-                                if PRINT_MIDI_SENDS:
-                                    print(f"✓ {trigger.name}: Note ON (Note: {note}, Velocity: {velocity})")
-                            else:
-                                cc = trigger.midi_config['cc']
-                                value = trigger.midi_config['value']
-                                channel = trigger.midi_config.get('channel', 0)
-                                self.midi_manager.send_cc(trigger.device_name, cc, value, channel)
-                                if PRINT_MIDI_SENDS:
-                                    print(f"✓ {trigger.name}: CC (CC: {cc}, Value: {value})")
+                            self._enforce_voice_limit(trigger, current_time)
+                            self._activate_trigger(trigger, current_time)
+                    else:
+                        self._maybe_retrigger_active_trigger(trigger, current_time)
                 
                 else:
                     # Trigger condition is not met
@@ -1625,23 +1852,7 @@ class VideoMIDITrigger:
                             should_deactivate = time_since_invalid >= trigger.debounce
                         
                         if should_deactivate:
-                            # Trigger deactivated
-                            trigger.active = False
-                            trigger.last_deactivated_time = current_time
-                            if trigger.midi_mode == 'note':
-                                note = trigger.midi_config['note']
-                                channel = trigger.midi_config['channel']
-                                self.midi_manager.send_note_off(trigger.device_name, note, channel)
-                                if PRINT_MIDI_SENDS:
-                                    print(f"✗ {trigger.name}: Note OFF (Note: {note})")
-                            else:
-                                off_value = trigger.midi_config.get('off_value')
-                                if off_value is not None:
-                                    cc = trigger.midi_config['cc']
-                                    channel = trigger.midi_config.get('channel', 0)
-                                    self.midi_manager.send_cc(trigger.device_name, cc, off_value, channel)
-                                    if PRINT_MIDI_SENDS:
-                                        print(f"✗ {trigger.name}: CC OFF (CC: {cc}, Value: {off_value})")
+                            self._deactivate_trigger(trigger, current_time)
             
         if self.overlay and self.overlay['alpha'] > 0:
             overlay_frame = frame.copy()
@@ -1698,17 +1909,7 @@ class VideoMIDITrigger:
         """Reset all triggers and send MIDI Note Off messages."""
         for trigger in self.triggers:
             if trigger.active:
-                trigger.active = False
-                if trigger.midi_mode == 'note' and 'note' in trigger.midi_config:
-                    note = trigger.midi_config['note']
-                    channel = trigger.midi_config['channel']
-                    self.midi_manager.send_note_off(trigger.device_name, note, channel)
-                elif trigger.midi_mode == 'cc':
-                    off_value = trigger.midi_config.get('off_value')
-                    if off_value is not None:
-                        cc = trigger.midi_config['cc']
-                        channel = trigger.midi_config.get('channel', 0)
-                        self.midi_manager.send_cc(trigger.device_name, cc, off_value, channel)
+                self._deactivate_trigger(trigger, time.time(), log_prefix="✗")
             # Reset motion detection state
             if trigger.trigger_type == 'motion':
                 trigger.previous_roi = None
@@ -1718,6 +1919,8 @@ class VideoMIDITrigger:
             # Reset timing state for debounce and throttle
             trigger.became_invalid_time = None
             trigger.last_deactivated_time = None
+            trigger.last_trigger_time = None
+            trigger.retrigger_armed = False
         
         # Reset MIDI timing for next loop
         self.midi_manager.current_video_time = 0.0

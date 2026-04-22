@@ -1,19 +1,27 @@
 source: https://www.youtube.com/watch?v=oNHs_-pHZTs
-overlay: [0, 80, 120, 150]
+overlay: [0, 80, 120, 20]
 
 triggers:
-  - name: "scan"
+  - name: ""
     colour:
-      - [70, 100, 120] # not active colour
-      - [255, 0, 0] # active colour
+      - [125, 255, 255, 30] # not active colour
+      - [255, 0, 0, 180] # active colour
     shape:
-      - [0, 45]
-      - [100, 45]
+      - [0, 15]
+      - [100, 15]
     type: "brightness"
-    threshold: 90
+    threshold: 40
+    retrigger:
+      threshold: 80
+      debounce: 0.5
+    movement:
+      direction: [0, 1]
+      speed: 0.7
+      duration: 40
+      type: ping-pong
     midi:
-      note: [53, 55, 58, 60, 62, 64, 66, 69, 71] 
+      note: [42, 55, 58, 60, 62, 64, 66, 69, 91] 
       velocity:
-        min: [80, 60]
+        min: [40, 10]
         max: [150, 127]
       channel: 0
