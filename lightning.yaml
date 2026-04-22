@@ -4,11 +4,12 @@ triggers:
   - name: "scan"
     colour:
       - [20, 60, 70]
-      - [0, 255, 60]
+      - [50, 255, 90]
     shape:
       - [0, 25]
       - [100, 25]
     type: "brightness"
+    persist: 1
     threshold: 40
     retrigger:
       threshold: 80
@@ -20,7 +21,7 @@ triggers:
       type: ping-pong
       random-start-points: true
     midi:
-      note: [54, 57, 64, 66, 69, 74] 
+      note: [50, 54, 57, 64, 66, 69, 74] 
       velocity:
         min: [40, 10]
         max: [150, 127]

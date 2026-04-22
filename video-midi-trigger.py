@@ -538,12 +538,15 @@ class Trigger:
         global_defaults = global_defaults or {}
         self.debounce = config.get('debounce', global_defaults.get('debounce', 0.0))
         self.throttle = config.get('throttle', global_defaults.get('throttle', 0.0))
+        self.persist = float(config.get('persist', global_defaults.get('persist', 0.0)))
         
-        # Validate debounce and throttle
+        # Validate debounce, throttle, and persist
         if self.debounce < 0:
             raise ValueError(f"Debounce must be >= 0, got {self.debounce} for trigger '{self.name}'")
         if self.throttle < 0:
             raise ValueError(f"Throttle must be >= 0, got {self.throttle} for trigger '{self.name}'")
+        if self.persist < 0:
+            raise ValueError(f"Persist must be >= 0, got {self.persist} for trigger '{self.name}'")
 
         retrigger_config = config.get('retrigger')
         if retrigger_config is not None:
@@ -696,6 +699,9 @@ class Trigger:
         self.last_deactivated_time = None  # Time when trigger was actually deactivated (sent Note OFF)
         self.last_trigger_time = None  # Time when trigger last sent its ON action
         self.retrigger_armed = False  # Becomes true once detected value is below retrigger threshold
+        self.persist_deactivated_time = None  # Time when trigger was deactivated, for persist colour fade
+        self.persist_start_color_rgb = None  # Velocity-blended colour at moment of deactivation
+        self.persist_start_alpha = None
 
         # Movement state
         movement_config = config.get('movement')
@@ -1108,6 +1114,29 @@ class Trigger:
                 )
                 color = rgb_to_bgr(blended_rgb)
                 alpha = self.inactive_alpha + (self.active_alpha - self.inactive_alpha) * mix
+            else:
+                blended_rgb = self.active_color_rgb
+                alpha = self.active_alpha
+            # Keep the persist snapshot up-to-date with the currently displayed active colour.
+            # This is read by the persist fade after deactivation (draw_on_frame runs after
+            # process_frame, so this always reflects the most recent active frame's colour).
+            self.persist_start_color_rgb = blended_rgb
+            self.persist_start_alpha = alpha
+
+        # Apply persist fade: when inactive but within persist window, blend from snapshot -> inactive
+        if not self.active and self.persist > 0 and self.persist_deactivated_time is not None:
+            elapsed = time.time() - self.persist_deactivated_time
+            persist_mix = max(0.0, 1.0 - elapsed / self.persist)
+            if persist_mix > 0.0:
+                inactive_rgb = self.inactive_color_rgb
+                start_rgb = self.persist_start_color_rgb if self.persist_start_color_rgb is not None else self.active_color_rgb
+                start_alpha = self.persist_start_alpha if self.persist_start_alpha is not None else self.active_alpha
+                blended_rgb = tuple(
+                    int(round(inactive_rgb[i] + (start_rgb[i] - inactive_rgb[i]) * persist_mix))
+                    for i in range(3)
+                )
+                color = rgb_to_bgr(blended_rgb)
+                alpha = self.inactive_alpha + (start_alpha - self.inactive_alpha) * persist_mix
 
         if self.trigger_type == 'range':
             # Filled vertical bar (transparent overlay)
@@ -1721,6 +1750,7 @@ class VideoMIDITrigger:
     def _activate_trigger(self, trigger, current_time):
         trigger.active = True
         trigger.last_trigger_time = current_time
+        trigger.persist_deactivated_time = None  # Cancel any active persist fade
         if trigger.retrigger is not None:
             trigger.retrigger_armed = trigger.detected_value < trigger.retrigger['threshold']
 
@@ -1765,6 +1795,11 @@ class VideoMIDITrigger:
         trigger.active = False
         trigger.last_deactivated_time = current_time
         trigger.retrigger_armed = False
+        if trigger.persist > 0:
+            trigger.persist_deactivated_time = current_time
+            # persist_start_color_rgb / persist_start_alpha are kept up-to-date
+            # every frame by draw_on_frame while the trigger is active, so no
+            # snapshot computation is needed here.
         if trigger.midi_mode == 'note':
             note = trigger.midi_config['note']
             channel = trigger.midi_config['channel']
