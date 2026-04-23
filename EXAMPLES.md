@@ -107,6 +107,44 @@ Shapes allow you to:
 - Match shapes in your video content more precisely
 - Works with any trigger type (brightness, darkness, motion, difference, range)
 
+## Rotation Movement
+
+Demonstrates rotating trigger areas around a center point:
+
+**Rotation Format:**
+```yaml
+movement:
+  center: [x%, y%]      # Center point in percentage coordinates
+  speed: 45             # Rotation speed in degrees per second (positive = clockwise, negative = counter-clockwise)
+```
+
+**Example - Spotlight Trigger:**
+```yaml
+- name: "Rotating Spotlight"
+  position:
+    x: 45
+    y: 45
+    width: 10
+    height: 10
+  type: "brightness"
+  threshold: 150
+  movement:
+    center: [50, 50]    # Rotate around center of frame
+    speed: 30           # 30 degrees per second (clockwise)
+  midi:
+    note: 60
+    velocity: 100
+    channel: 0
+```
+
+This configuration creates a 10x10 trigger area that rotates clockwise around the center of the frame at 30 degrees per second. Use negative speed for counter-clockwise rotation.
+
+Rotation is useful for:
+- **Spotlight effects**: Monitor a rotating circular area
+- **Scanning patterns**: Create rotating scan lines or shapes
+- **Circular animations**: Follow rotating objects in your video
+- **Waveform/spectrum displays**: Rotate trigger areas around a center point
+
 ## Creating Your Own Configuration
 
 To create a custom configuration:

@@ -706,25 +706,45 @@ class Trigger:
         # Movement state
         movement_config = config.get('movement')
         if movement_config is not None:
-            movement_type = movement_config.get('type', 'loop')
-            if movement_type not in ('loop', 'ping-pong'):
-                raise ValueError(
-                    f"Movement type must be 'loop' or 'ping-pong', got '{movement_type}' for trigger '{self.name}'"
-                )
-            random_start_points = bool(movement_config.get('random-start-points', False))
-            self.movement = {
-                'type': movement_type,
-                'direction': movement_config.get('direction', [0, 0]),
-                # Speed is interpreted as percentage of frame width per second.
-                'speed': float(movement_config.get('speed', 0)),
-                'duration': float(movement_config.get('duration', 0)),
-                'random_start_points': random_start_points,
-            }
+            # Check for rotation mode (center/centre-based)
+            center_config = movement_config.get('center') or movement_config.get('centre')
+            
+            if center_config is not None:
+                # Rotation mode
+                if not isinstance(center_config, (list, tuple)) or len(center_config) != 2:
+                    raise ValueError(f"Center must be [x%, y%] for trigger '{self.name}'")
+                rotation_speed = float(movement_config.get('speed', 0))
+                random_start_points = bool(movement_config.get('random-start-points', False))
+                # rotation_speed is in degrees per second (positive = clockwise, negative = counter-clockwise)
+                self.movement = {
+                    'mode': 'rotation',
+                    'center': center_config,
+                    'speed': rotation_speed,  # degrees per second
+                    'random_start_points': random_start_points,
+                }
+            else:
+                # Linear movement mode (existing direction-based movement)
+                movement_type = movement_config.get('type', 'loop')
+                if movement_type not in ('loop', 'ping-pong'):
+                    raise ValueError(
+                        f"Movement type must be 'loop' or 'ping-pong', got '{movement_type}' for trigger '{self.name}'"
+                    )
+                random_start_points = bool(movement_config.get('random-start-points', False))
+                self.movement = {
+                    'mode': 'linear',
+                    'type': movement_type,
+                    'direction': movement_config.get('direction', [0, 0]),
+                    # Speed is interpreted as percentage of frame width per second.
+                    'speed': float(movement_config.get('speed', 0)),
+                    'duration': float(movement_config.get('duration', 0)),
+                    'random_start_points': random_start_points,
+                }
         else:
             self.movement = None
         self._movement_start_time = None
         self._movement_phase_offset_s = 0.0
         self._movement_px_offset = (0.0, 0.0)
+        self._movement_rotation_angle = 0.0  # Current rotation angle in degrees
 
     def _avg_brightness(self, frame, gray_frame=None):
         x, y, w, h = self.roi_coords
@@ -734,12 +754,12 @@ class Trigger:
             roi = frame[y:y+h, x:x+w]
             gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         
-        # If shape mask exists, apply it to only calculate on shape pixels
-        if self.shape_mask is not None:
-            # Check if mask has any pixels (avoid NaN from empty array)
-            if not np.any(self.shape_mask):
+        # Use a stable local copy so runtime updates cannot change mask mid-check.
+        mask = self.shape_mask
+        if isinstance(mask, np.ndarray) and mask.shape == gray_roi.shape:
+            if not np.any(mask):
                 return 0.0  # Return 0 brightness if no valid pixels in mask
-            return float(np.mean(gray_roi[self.shape_mask]))
+            return float(np.mean(gray_roi[mask]))
         return float(np.mean(gray_roi))
     
     def _create_shape_mask(self, frame_height, frame_width):
@@ -788,10 +808,20 @@ class Trigger:
         return bool_mask
     def _extract_roi_grayscale(self, frame, gray_frame, x, y, w, h):
         """Extract and return the grayscale ROI from the frame."""
+        frame_h, frame_w = frame.shape[:2]
+        x0 = max(0, min(frame_w, int(x)))
+        y0 = max(0, min(frame_h, int(y)))
+        x1 = max(0, min(frame_w, int(x + w)))
+        y1 = max(0, min(frame_h, int(y + h)))
+
+        # ROI is fully outside frame or collapsed.
+        if x1 <= x0 or y1 <= y0:
+            return None
+
         if gray_frame is not None:
-            return gray_frame[y:y+h, x:x+w]
+            return gray_frame[y0:y1, x0:x1]
         else:
-            roi = frame[y:y+h, x:x+w]
+            roi = frame[y0:y1, x0:x1]
             return cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     
     def setup_roi(self, frame_height, frame_width):
@@ -883,18 +913,41 @@ class Trigger:
         """Update trigger position based on movement configuration."""
         if self.movement is None or self._base_roi_coords is None:
             return
+        
+        # Initialize movement start time if needed
+        if self._movement_start_time is None:
+            self._movement_start_time = current_time
+            if self.movement.get('mode') == 'rotation':
+                random_start_points = self.movement.get('random_start_points', False)
+                speed = float(self.movement.get('speed', 0.0))
+                if random_start_points and speed != 0:
+                    # Randomize initial angular phase over a full 360-degree cycle.
+                    self._movement_phase_offset_s = random.uniform(0.0, 360.0 / abs(speed))
+        
+        # Handle rotation movement
+        if self.movement.get('mode') == 'rotation':
+            self._update_rotation_movement(current_time, frame_width, frame_height)
+        else:
+            # Handle linear movement (existing logic)
+            self._update_linear_movement(current_time, frame_width, frame_height)
+    
+    def _update_linear_movement(self, current_time, frame_width, frame_height):
+        """Update position for linear (direction-based) movement."""
         direction = self.movement['direction']
         movement_type = self.movement.get('type', 'loop')
         random_start_points = self.movement.get('random_start_points', False)
         speed = self.movement['speed']
         duration = self.movement['duration']
+        
         if speed == 0 or (direction[0] == 0 and direction[1] == 0):
             return
-        if self._movement_start_time is None:
-            self._movement_start_time = current_time
-            if random_start_points and duration > 0:
-                cycle_duration = duration * (2.0 if movement_type == 'ping-pong' else 1.0)
-                self._movement_phase_offset_s = random.uniform(0.0, cycle_duration)
+        
+        if random_start_points and duration > 0:
+            cycle_duration = duration * (2.0 if movement_type == 'ping-pong' else 1.0)
+            if not hasattr(self, '_random_start_point_offset'):
+                self._random_start_point_offset = random.uniform(0.0, cycle_duration)
+            self._movement_phase_offset_s = self._random_start_point_offset
+        
         elapsed = (current_time - self._movement_start_time) + self._movement_phase_offset_s
         if duration > 0:
             if movement_type == 'ping-pong':
@@ -906,21 +959,206 @@ class Trigger:
                     elapsed = cycle_elapsed
             else:
                 elapsed = elapsed % duration
+        
         dx, dy = float(direction[0]), float(direction[1])
         mag = (dx * dx + dy * dy) ** 0.5
         if mag > 0:
             dx /= mag
             dy /= mag
+        
         speed_px_per_sec = (speed / 100.0) * frame_width
         offset_x = dx * speed_px_per_sec * elapsed
         offset_y = dy * speed_px_per_sec * elapsed
         self._movement_px_offset = (offset_x, offset_y)
+        
         bx, by, bw, bh = self._base_roi_coords
         new_x = int(round(bx + offset_x))
         new_y = int(round(by + offset_y))
         new_x = max(0, min(frame_width - bw, new_x))
         new_y = max(0, min(frame_height - bh, new_y))
         self.roi_coords = (new_x, new_y, bw, bh)
+    
+    def _update_rotation_movement(self, current_time, frame_width, frame_height):
+        """Update position for rotation movement."""
+        center_percent = self.movement['center']
+        rotation_speed = self.movement['speed']  # degrees per second
+        
+        if rotation_speed == 0:
+            return
+        
+        # Convert center from percentage to pixel coordinates
+        center_x = center_percent[0] / 100.0 * frame_width
+        center_y = center_percent[1] / 100.0 * frame_height
+        
+        # Calculate elapsed time
+        elapsed = (current_time - self._movement_start_time) + self._movement_phase_offset_s
+        
+        # Calculate rotation angle (in degrees)
+        # Positive speed = clockwise, negative = counter-clockwise
+        rotation_angle = rotation_speed * elapsed
+        self._movement_rotation_angle = rotation_angle
+        
+        # Get base ROI and apply rotation
+        bx, by, bw, bh = self._base_roi_coords
+        
+        # Calculate the new ROI by rotating the base ROI around the center
+        rotated_coords = self._rotate_roi_around_center(
+            bx, by, bw, bh, center_x, center_y, rotation_angle
+        )
+        
+        # Set the new ROI coordinates
+        self.roi_coords = rotated_coords
+        
+        # For shape-based triggers, regenerate the shape mask with the rotated coordinates
+        if self.shape is not None:
+            # Rotate the original shape points and update the mask
+            self._update_rotated_shape_mask(frame_height, frame_width, center_x, center_y, rotation_angle)
+    
+    def _update_rotated_shape_mask(self, frame_height, frame_width, center_x, center_y, angle_deg):
+        """Regenerate shape mask for rotated shape-based triggers."""
+        try:
+            import math
+            
+            # Convert angle to radians
+            angle_rad = math.radians(angle_deg)
+            cos_a = math.cos(angle_rad)
+            sin_a = math.sin(angle_rad)
+            
+            # Rotate original shape points
+            rotated_shape = []
+            for point in self.shape:
+                # Convert from percentage to pixel coordinates
+                px = point[0] / 100.0 * frame_width
+                py = point[1] / 100.0 * frame_height
+                
+                # Rotate around center
+                tx = px - center_x
+                ty = py - center_y
+                
+                rx = tx * cos_a - ty * sin_a
+                ry = tx * sin_a + ty * cos_a
+                
+                rotated_x = rx + center_x
+                rotated_y = ry + center_y
+                
+                rotated_shape.append((rotated_x, rotated_y))
+            
+            # Recalculate bounding box from rotated shape
+            xs = [p[0] for p in rotated_shape]
+            ys = [p[1] for p in rotated_shape]
+            
+            x = min(frame_width - 1, max(0, int(min(xs))))
+            y = min(frame_height - 1, max(0, int(min(ys))))
+            max_x = min(frame_width - 1, int(max(xs)))
+            max_y = min(frame_height - 1, int(max(ys)))
+            w = max(1, max_x - x + 1)
+            h = max(1, max_y - y + 1)
+            
+            # Update ROI to match rotated shape bounding box
+            self.roi_coords = (x, y, w, h)
+            
+            # Recreate the shape mask with the rotated shape, passing the calculated bounding box
+            self.shape_mask = self._create_rotated_shape_mask(frame_height, frame_width, rotated_shape, x, y, w, h)
+        except Exception as e:
+            print(f"Error updating rotated shape mask for trigger '{self.name}': {e}")
+            # Fallback: don't use shape mask for this frame
+            self.shape_mask = None
+    
+    def _create_rotated_shape_mask(self, frame_height, frame_width, rotated_shape_pixels, roi_x, roi_y, roi_w, roi_h):
+        """Create a binary mask for a rotated shape with known ROI bounds.
+        
+        Args:
+            frame_height, frame_width: Frame dimensions
+            rotated_shape_pixels: List of (x, y) points in frame coordinates
+            roi_x, roi_y, roi_w, roi_h: ROI bounds (must match the shape's bounding box)
+        """
+        # Create mask in ROI-relative coordinates using the provided ROI dimensions
+        mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+        
+        if len(rotated_shape_pixels) == 1:
+            # Single point - mark center pixel
+            px, py = rotated_shape_pixels[0]
+            px_roi = int(px - roi_x)
+            py_roi = int(py - roi_y)
+            if 0 <= px_roi < roi_w and 0 <= py_roi < roi_h:
+                mask[py_roi, px_roi] = 1
+        elif len(rotated_shape_pixels) == 2:
+            # Line - draw line in mask
+            p1 = (int(rotated_shape_pixels[0][0] - roi_x), int(rotated_shape_pixels[0][1] - roi_y))
+            p2 = (int(rotated_shape_pixels[1][0] - roi_x), int(rotated_shape_pixels[1][1] - roi_y))
+            cv2.line(mask, p1, p2, 1, 1)
+        else:
+            # Polygon - fill polygon
+            points_roi = np.array([[int(px - roi_x), int(py - roi_y)] for px, py in rotated_shape_pixels], dtype=np.int32)
+            cv2.fillPoly(mask, [points_roi], 1)
+        
+        return mask.astype(bool)
+    
+    def _rotate_roi_around_center(self, x, y, w, h, center_x, center_y, angle_deg):
+        """
+        Rotate a rectangle around a center point and return the new bounding box.
+        
+        Args:
+            x, y: top-left corner of rectangle
+            w, h: width and height of rectangle
+            center_x, center_y: center point to rotate around
+            angle_deg: rotation angle in degrees (positive = clockwise)
+        
+        Returns:
+            Tuple of (new_x, new_y, new_w, new_h) for the rotated bounding box
+        """
+        import math
+        
+        # Convert angle to radians
+        # Note: In image coordinates, Y increases downward, so clockwise rotation is positive
+        angle_rad = math.radians(angle_deg)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+        
+        # Original rectangle corners
+        corners = [
+            (x, y),                    # top-left
+            (x + w, y),                # top-right
+            (x + w, y + h),            # bottom-right
+            (x, y + h),                # bottom-left
+        ]
+        
+        # Rotate each corner around the center
+        rotated_corners = []
+        for cx, cy in corners:
+            # Translate to origin
+            tx = cx - center_x
+            ty = cy - center_y
+            
+            # Rotate around origin
+            rx = tx * cos_a - ty * sin_a
+            ry = tx * sin_a + ty * cos_a
+            
+            # Translate back
+            rotated_x = rx + center_x
+            rotated_y = ry + center_y
+            
+            rotated_corners.append((rotated_x, rotated_y))
+        
+        # Find new bounding box from rotated corners
+        rotated_xs = [c[0] for c in rotated_corners]
+        rotated_ys = [c[1] for c in rotated_corners]
+        
+        min_x = min(rotated_xs)
+        min_y = min(rotated_ys)
+        max_x = max(rotated_xs)
+        max_y = max(rotated_ys)
+        
+        new_x = int(round(min_x))
+        new_y = int(round(min_y))
+        new_w = int(round(max_x - min_x))
+        new_h = int(round(max_y - min_y))
+        
+        # Ensure minimum dimensions
+        new_w = max(1, new_w)
+        new_h = max(1, new_h)
+        
+        return (new_x, new_y, new_w, new_h)
 
     def check_trigger(self, frame, gray_frame=None):
         """Check if the trigger condition is met."""
@@ -944,6 +1182,11 @@ class Trigger:
         if self.trigger_type == 'motion':
             # Calculate average difference between current and previous frame IN THE ROI ONLY
             current_roi = self._extract_roi_grayscale(frame, gray_frame, x, y, w, h)
+
+            if current_roi is None or current_roi.size == 0:
+                self.previous_roi = None
+                self.detected_value = 0.0
+                return False
             
             # If no previous frame or ROI size changed, store current ROI and return False
             if self.previous_roi is None or self.previous_roi.shape != current_roi.shape:
@@ -953,14 +1196,17 @@ class Trigger:
             
             # Calculate average absolute difference within the ROI only
             diff = cv2.absdiff(current_roi, self.previous_roi)
+            if diff is None or diff.size == 0:
+                self.previous_roi = current_roi.copy()
+                self.detected_value = 0.0
+                return False
             
-            # Apply shape mask if it exists
-            if self.shape_mask is not None:
-                # Check if mask has any pixels (avoid NaN from empty array)
-                if not np.any(self.shape_mask):
+            mask = self.shape_mask
+            if isinstance(mask, np.ndarray) and mask.shape == diff.shape:
+                if not np.any(mask):
                     avg_diff = 0.0  # Return 0 motion if no valid pixels in mask
                 else:
-                    avg_diff = float(np.mean(diff[self.shape_mask]))
+                    avg_diff = float(np.mean(diff[mask]))
             else:
                 avg_diff = float(np.mean(diff))
             
@@ -973,6 +1219,11 @@ class Trigger:
         if self.trigger_type == 'difference':
             # Calculate average difference between current and first frame IN THE ROI ONLY
             current_roi = self._extract_roi_grayscale(frame, gray_frame, x, y, w, h)
+
+            if current_roi is None or current_roi.size == 0:
+                self.first_roi = None
+                self.detected_value = 0.0
+                return False
             
             # If no first frame, store current ROI and return False
             if self.first_roi is None or self.first_roi.shape != current_roi.shape:
@@ -982,7 +1233,18 @@ class Trigger:
             
             # Calculate average absolute difference within the ROI only
             diff = cv2.absdiff(current_roi, self.first_roi)
-            avg_diff = float(np.mean(diff))
+            if diff is None or diff.size == 0:
+                self.detected_value = 0.0
+                return False
+            
+            mask = self.shape_mask
+            if isinstance(mask, np.ndarray) and mask.shape == diff.shape:
+                if not np.any(mask):
+                    avg_diff = 0.0
+                else:
+                    avg_diff = float(np.mean(diff[mask]))
+            else:
+                avg_diff = float(np.mean(diff))
             
             self.detected_value = avg_diff
             return avg_diff >= self.threshold
@@ -1152,15 +1414,45 @@ class Trigger:
         
         # Draw shape if defined, otherwise draw rectangle
         if self.shape is not None:
-            # Convert shape points from percentages to pixel coordinates, applying movement offset
+            # Convert shape points from percentages to pixel coordinates.
+            # For rotation mode, rotate around center using the current movement angle.
+            # For linear mode, apply movement offset.
             frame_height, frame_width = frame.shape[:2]
-            off_x = int(round(self._movement_px_offset[0]))
-            off_y = int(round(self._movement_px_offset[1]))
             shape_pixels = []
-            for point in self.shape:
-                px = int(frame_width * point[0] / 100) + off_x
-                py = int(frame_height * point[1] / 100) + off_y
-                shape_pixels.append((px, py))
+
+            movement_mode = None
+            if self.movement is not None:
+                movement_mode = self.movement.get('mode')
+
+            if movement_mode == 'rotation':
+                import math
+                center_percent = self.movement['center']
+                center_x = center_percent[0] / 100.0 * frame_width
+                center_y = center_percent[1] / 100.0 * frame_height
+                angle_rad = math.radians(self._movement_rotation_angle)
+                cos_a = math.cos(angle_rad)
+                sin_a = math.sin(angle_rad)
+
+                for point in self.shape:
+                    base_x = point[0] / 100.0 * frame_width
+                    base_y = point[1] / 100.0 * frame_height
+
+                    tx = base_x - center_x
+                    ty = base_y - center_y
+
+                    rx = tx * cos_a - ty * sin_a
+                    ry = tx * sin_a + ty * cos_a
+
+                    px = int(round(rx + center_x))
+                    py = int(round(ry + center_y))
+                    shape_pixels.append((px, py))
+            else:
+                off_x = int(round(self._movement_px_offset[0]))
+                off_y = int(round(self._movement_px_offset[1]))
+                for point in self.shape:
+                    px = int(frame_width * point[0] / 100) + off_x
+                    py = int(frame_height * point[1] / 100) + off_y
+                    shape_pixels.append((px, py))
 
             # Draw label near the first point of the shape
             label_y = shape_pixels[0][1] - label_margin
@@ -1233,6 +1525,7 @@ class VideoMIDITrigger:
         self.available_cameras = []
         self.mirror = False
         self.scale = 1.0
+        self.playback_speed = 1.0
         self.overlay = None
         self.show_triggers = True
         self.window_name = "Video-MIDI Trigger"
@@ -1294,6 +1587,7 @@ class VideoMIDITrigger:
             print(f"Video: {display_source}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
         print(f"FPS: {self.fps}")
+        print(f"Playback speed: {self.playback_speed}x")
         if not self.use_camera and self.video_duration_s is not None:
             print(f"Length: {self.video_duration_s:.3f}s ({self.frame_count} frames)")
         if self.save_midi:
@@ -1324,9 +1618,12 @@ class VideoMIDITrigger:
         self.image_path = None
         self.mirror = bool(self.config.get('mirror', False))
         self.scale = float(self.config.get('scale', 1.0))
+        self.playback_speed = float(self.config.get('playback-speed', 1.0))
         self.overlay = parse_overlay(self.config.get('overlay'))
         if self.scale <= 0:
             raise ValueError(f"Scale must be > 0, got {self.scale}")
+        if self.playback_speed <= 0:
+            raise ValueError(f"playback-speed must be > 0, got {self.playback_speed}")
 
         IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
 
@@ -1688,6 +1985,7 @@ class VideoMIDITrigger:
                 'movement_start_time': trigger._movement_start_time,
                 'movement_phase_offset_s': trigger._movement_phase_offset_s,
                 'movement_px_offset': trigger._movement_px_offset,
+                'movement_rotation_angle': trigger._movement_rotation_angle,
                 'roi_coords': trigger.roi_coords,
             }
         
@@ -1725,6 +2023,7 @@ class VideoMIDITrigger:
                 trigger._movement_start_time = state['movement_start_time']
                 trigger._movement_phase_offset_s = state['movement_phase_offset_s']
                 trigger._movement_px_offset = state['movement_px_offset']
+                trigger._movement_rotation_angle = state.get('movement_rotation_angle', 0.0)
 
                 prior_roi = state['roi_coords']
                 if (
@@ -1982,10 +2281,7 @@ class VideoMIDITrigger:
 
         cv2.namedWindow(self.window_name, cv2.WINDOW_AUTOSIZE)
         cv2.setMouseCallback(self.window_name, self._on_mouse)
-        
-        # Calculate delay between frames (in milliseconds)
-        delay = int(1000 / self.fps) if self.fps > 0 else 1
-        
+
         # Start MIDI recording (if enabled)
         if self.midi_recorder:
             self.midi_recorder.start_recording()
@@ -2055,6 +2351,8 @@ class VideoMIDITrigger:
                 cv2.imshow(self.window_name, frame)
                 
                 # Handle keyboard input
+                effective_fps = self.fps * self.playback_speed if self.fps > 0 else 0
+                delay = int(1000 / effective_fps) if effective_fps > 0 else 1
                 elapsed_ms = (time.perf_counter() - loop_start) * 1000
                 sleep_ms = max(1, int(delay - elapsed_ms))
                 key = cv2.waitKey(sleep_ms) & 0xFF

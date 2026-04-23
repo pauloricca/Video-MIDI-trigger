@@ -16,12 +16,14 @@ triggers:
       debounce: 0.5
     movement:
       direction: [0, 1]
-      speed: 0.7
-      duration: 40
+      speed: 0.5
+      duration: 60
       type: ping-pong
       random-start-points: true
     midi:
       note: [50, 54, 57, 64, 66, 69, 74] 
+      # note: [45, 48, 52, 55, 57, 60, 69]
+      # note: [47, 51, 54, 58, 60, 62, 71] 
       velocity:
         min: [40, 10]
         max: [150, 127]

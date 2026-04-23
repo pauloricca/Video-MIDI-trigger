@@ -1,0 +1,56 @@
+source: "camera"
+
+camera:
+  width: 640
+  height: 480
+  fps: 30
+
+triggers:
+  # Spotlight rotating clockwise around center
+  - name: "CW Spotlight"
+    position:
+      x: 45
+      y: 45
+      width: 10
+      height: 10
+    type: "brightness"
+    threshold: 150
+    movement:
+      center: [50, 50]
+      speed: 45  # 45 degrees per second clockwise
+    midi:
+      note: 60
+      velocity: 100
+      channel: 0
+
+  # Scanning line rotating counter-clockwise around center
+  - name: "CCW Scanner"
+    shape:
+      - [50, 20]
+      - [50, 80]
+    type: "brightness"
+    threshold: 100
+    movement:
+      center: [50, 50]
+      speed: -30  # -30 degrees per second counter-clockwise
+    midi:
+      note: 67
+      velocity: 100
+      channel: 0
+
+  # Small rotating shape in top-left
+  - name: "Corner Rotator"
+    position:
+      x: 20
+      y: 20
+      width: 8
+      height: 8
+    type: "motion"
+    threshold: 10
+    movement:
+      center: [25, 25]
+      speed: 60  # 60 degrees per second
+    midi:
+      note: 72
+      velocity: [50, 127]
+      channel: 0

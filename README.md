@@ -60,6 +60,7 @@ Create a YAML configuration file (e.g., `road.yaml`) with the following structur
 ```yaml
 source: "path/to/your/video.mp4"
 device: "IAC Driver Bus 1"  # Optional global default MIDI device
+playback-speed: 0.5  # Optional playback rate multiplier (0.5=half speed)
 
 # Optional: Global defaults for all triggers
 debounce: 0.5  # Wait 0.5s before deactivating (prevents flickering)
@@ -162,6 +163,7 @@ triggers:
   - **fps**: Target camera FPS (default 30)
 - **mirror** (optional): Mirror the camera image horizontally (default false). Only applies when using a camera source.
 - **scale** (optional): Scale the source frame by a ratio (default 1.0). Applies to camera or video sources.
+- **playback-speed** (optional): Playback speed multiplier (default 1.0). Example: `0.5` plays at half speed, `2.0` plays at double speed.
 - **overlay** (optional): RGBA overlay applied across the whole video/image source before triggers are drawn, e.g. `[0, 80, 120, 100]`. RGB uses standard RGB ordering; alpha can be `0-255` or `0.0-1.0`.
 - **device** (optional): Global default MIDI output device name. Used when a trigger does not specify its own device.
 - **debounce** (optional): Global default debounce time in seconds (default 0). Prevents triggers from deactivating too quickly.
@@ -199,12 +201,19 @@ triggers:
   - **voices** (optional): Maximum simultaneous note voices for this trigger (note mode only). When a new note would exceed this limit, the oldest active voice in the same trigger group is sent Note OFF first (voice stealing).
   - **colour** / **color** (optional): Per-trigger display color in RGB(A). Accepts `[r, g, b]`, `[r, g, b, a]`, `[[inactive_r, inactive_g, inactive_b], [active_r, active_g, active_b]]`, or `[[inactive_r, inactive_g, inactive_b, inactive_a], [active_r, active_g, active_b, active_a]]`. If only one color is provided, inactive color is auto-dimmed. Alpha can be `0-255` or `0.0-1.0`.
     - For triggers using variable velocity, the active visual color is interpolated from inactive→active color using the same detected-value proportion used for velocity interpolation.
-  - **movement** (optional): Move the trigger shape/region over time.
+  - **movement** (optional): Move the trigger shape/region over time. Two modes are available:
+    
+    **Linear Movement Mode** (direction-based):
     - **type**: Movement mode. `loop` repeats from the start when it reaches the end. `ping-pong` reverses direction at the end instead of jumping back. Default: `loop`.
-    - **direction**: `[x, y]` direction vector.
+    - **direction**: `[x, y]` direction vector (normalized).
     - **speed**: Speed in percentage of frame width per second.
     - **duration**: Duration in seconds for one forward pass.
     - **random-start-points**: When `true`, each trigger starts at a random point along its movement trajectory instead of always starting at the beginning. For segmented multi-note line triggers, each segment gets its own random start point.
+    
+    **Rotation Movement Mode** (center-based):
+    - **center** or **centre**: `[x%, y%]` center point in percentage coordinates (0-100).
+    - **speed**: Rotation speed in degrees per second. Positive = clockwise, negative = counter-clockwise.
+    
   - **device** (optional): Per-trigger MIDI output device name. Overrides the global `device` for this trigger.
   - **midi**: MIDI message configuration
     - **note**: MIDI note number (0-127) or note name for brightness/darkness/motion/difference (e.g. `C`, `D#4`, `Eb2`). If no octave is provided, octave 4 is assumed (so `C` = middle C = 60).

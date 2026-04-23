@@ -1,0 +1,41 @@
+source: https://www.youtube.com/watch?v=nt3D26lrkho
+overlay: [45, 30, 115, 0.7]
+playback-speed: 0.4
+
+triggers:
+  - name: ""
+    colour:
+      - [255, 255, 255, 100]
+      - [255, 255, 255, 255]
+    shape:
+      - [0, 70]
+      - [100, 70]
+    type: "motion"
+    persist: 0.7
+    threshold: 20
+    midi:
+      # note: [50, 54, 57, 64, 66, 69, 74] 
+      # note: [45, 48, 52, 55, 57, 60, 69]
+      # note: [21, 24, 28, 31, 33, 36, 45]
+      note: [33, 36, 40, 43, 45, 48, 57]
+      # note: [47, 51, 54, 58, 60, 62, 71] 
+      channel: 0
+  - name: ""
+    colour:
+      - [255, 255, 255, 30]
+      - [255, 255, 255, 125]
+    shape:
+      - [25, 50]
+      - [75, 50]
+    type: "motion"
+    persist: 0.7
+    threshold: 12
+    midi:
+      # note: [50, 54, 57, 64, 66, 69, 74] 
+      # note: [45, 48, 52, 55, 57, 60, 69]
+      # note: [47, 51, 54, 58, 60, 62, 71] 
+      # note: [69, 72, 76, 79, 81, 84, 93]
+      # note: [45, 52, 55, 57, 69]
+      note: [59, 64, 67, 72, 75]
+      channel: 0
+      velocity: 40
